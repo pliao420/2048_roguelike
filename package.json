@@ -1,0 +1,11 @@
+{
+  "name": "game-2048-roguelike",
+  "version": "1.0.0",
+  "description": "2048 Roguelike - server for leaderboard API",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
