@@ -343,10 +343,7 @@ let lastDirection = 0; // last move direction for manual merge mode post-move ef
 let bombGrid = []; // 2D array: bombGrid[r][c] = true if tile has bomb
 let mergeCountThisMove = 0; // tracks merges in current move for combo buff
 let milestoneReached = new Set(); // tracks which move-count milestones have triggered
-let slideAnims = []; // [{v, fromX, fromY, toX, toY, t}] smooth slide animations
-const SLIDE_DURATION = 120; // ms for slide animation // [{r,c,fromX,fromY,toX,toY,progress}]
 let newTileSpawn = null; // {r,c,value}
-let movingTiles = []; // tiles being animated
 
 // ==================== Buff 定义 ====================
 const ALL_BUFFS = [
@@ -633,9 +630,6 @@ function findMergeablePairs(line) {
 
 function moveGrid(direction) {
   // direction: 0=up, 1=right, 2=down, 3=left
-  // 如果动画还在播放，跳过
-  if (slideAnims.length > 0) return { changed: false, totalScore: 0 };
-
   lastDirection = direction;
   const oldGrid = grid.map(r => [...r]);
   const oldBombGrid = bombGrid.map(r => [...r]);
@@ -717,9 +711,6 @@ function moveGrid(direction) {
       if (grid[r][c] !== oldGrid[r][c]) changed = true;
 
   if (changed) {
-    // 生成滑动动画
-    slideAnims = buildSlideAnims(oldGrid, grid, direction);
-
     // 连击奖励：多个合并额外加分
     if (hasBuff('combo') && mergeCountThisMove > 1) {
       totalScore += Math.floor(totalScore * 0.3 * (mergeCountThisMove - 1));
@@ -776,56 +767,6 @@ function slideBombsNoMerge(line, bombLine, direction) {
   const bResult = direction === 1 ? filteredBombs.reverse() : filteredBombs;
   if (direction === 2 || direction === 1) { result.reverse(); bResult.reverse(); }
   return bResult;
-}
-
-// 构建滑动动画数据（沿滑动方向追溯每个方块的真实来源）
-function buildSlideAnims(oldGrid, newGrid, direction) {
-  const anims = [];
-  const usedOld = new Set();
-
-  // 沿滑动相反方向搜索：方块只能从那个方向来
-  const searchDirs = [
-    [1, 0],  // 0=up: 从下方来，向下搜
-    [0, -1], // 1=right: 从左边来，向左搜
-    [-1, 0], // 2=down: 从上方来，向上搜
-    [0, 1],  // 3=left: 从右边来，向右搜
-  ];
-  const [sdr, sdc] = searchDirs[direction];
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (newGrid[r][c] === 0) continue;
-      const v = newGrid[r][c];
-
-      // 沿来源方向搜索候选方块（距离递增）
-      const candidates = [];
-      for (let dist = 0; dist < Math.max(rows, cols); dist++) {
-        const or = r + sdr * dist;
-        const oc = c + sdc * dist;
-        if (or < 0 || or >= rows || oc < 0 || oc >= cols) break;
-        const key = `${or},${oc}`;
-        if (usedOld.has(key) || oldGrid[or][oc] === 0) continue;
-        if (oldGrid[or][oc] === v) candidates.push({ or, oc, dist, type: 'slide' });
-        else if (oldGrid[or][oc] === v / 2) candidates.push({ or, oc, dist, type: 'merge' });
-      }
-
-      if (candidates.length === 0) continue;
-
-      // 优先精确同值，再按距离近的选
-      candidates.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'slide' ? -1 : 1;
-        return a.dist - b.dist;
-      });
-
-      const best = candidates[0];
-      if (best.or !== r || best.oc !== c) {
-        anims.push({ v, fromX: cellX(best.oc), fromY: cellY(best.or), toX: cellX(c), toY: cellY(r), t: 0 });
-      }
-      usedOld.add(`${best.or},${best.oc}`);
-    }
-  }
-
-  return anims;
 }
 
 // 磁力吸附：扫描全棋盘，相邻相同数字合并
@@ -1117,60 +1058,11 @@ function render() {
 
   // 数字块
   const now = Date.now();
-  // 收集动画目标位置，避免重复绘制
-  const animTargets = new Set(slideAnims.map(a => `${cellToRow(a.toY)},${cellToCol(a.toX)}`));
-  const animSources = new Set(slideAnims.map(a => `${cellToRow(a.fromY)},${cellToCol(a.fromX)}`));
-
-  // 先绘制动画中的方块（插值位置）
-  for (const a of slideAnims) {
-    const progress = Math.min(a.t, 1);
-    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-    const ax = a.fromX + (a.toX - a.fromX) * eased;
-    const ay = a.fromY + (a.toY - a.fromY) * eased;
-    const v = a.v;
-    const bgColor = TILE_COLORS[v] || '#3c3a32';
-    const textColor = TILE_TEXT_COLORS[v] || '#f9f6f2';
-
-    ctx.fillStyle = bgColor;
-    ctx.shadowColor = 'rgba(0,0,0,0.3)';
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetY = 2;
-    ctx.beginPath();
-    roundRect(ctx, ax + 2, ay + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
-    ctx.fill();
-    ctx.shadowColor = 'transparent';
-
-    // 炸弹标记
-    const ar = cellToRow(a.toY), ac = cellToCol(a.toX);
-    if (bombGrid[ar] && bombGrid[ar][ac]) {
-      const pulse = 0.5 + 0.5 * Math.sin(now / 200);
-      ctx.strokeStyle = `rgba(255, 71, 87, ${0.5 + pulse * 0.5})`;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      roundRect(ctx, ax + 1, ay + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
-      ctx.stroke();
-      ctx.lineWidth = 1;
-      ctx.fillStyle = '#ff4757';
-      ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'top';
-      ctx.fillText('💣', ax + CELL_SIZE - 4, ay + 4);
-    }
-
-    ctx.fillStyle = textColor;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const fontSize = v < 100 ? 28 : v < 1000 ? 24 : v < 10000 ? 20 : 16;
-    ctx.font = `bold ${fontSize}px "PingFang SC","Microsoft YaHei",sans-serif`;
-    ctx.fillText(v, ax + CELL_SIZE / 2, ay + CELL_SIZE / 2 + 2);
-  }
-
-  // 再绘制静态方块（跳过动画目标和动画源位置）
+  // 绘制方块
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (grid[r][c] === 0) continue;
       const key = `${r},${c}`;
-      if (animTargets.has(key)) continue; // 已被动画绘制
       const v = grid[r][c];
       const x = cellX(c), y = cellY(r);
 
@@ -1814,16 +1706,6 @@ function gameLoop(timestamp) {
   if (!lastFrameTime) lastFrameTime = timestamp;
   const dt = Math.min(timestamp - lastFrameTime, 50);
   lastFrameTime = timestamp;
-
-  // 更新滑动动画
-  if (slideAnims.length > 0) {
-    let allDone = true;
-    for (const a of slideAnims) {
-      a.t += dt / SLIDE_DURATION;
-      if (a.t < 1) allDone = false;
-    }
-    if (allDone) slideAnims = [];
-  }
 
   render();
   requestAnimationFrame(gameLoop);
