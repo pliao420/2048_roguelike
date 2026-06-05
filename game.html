@@ -1830,31 +1830,48 @@ function gameLoop(timestamp) {
 function initGame() {
   const saved = loadGame();
   if (saved) {
-    // 恢复存档
-    grid = saved.grid;
-    rows = saved.rows;
-    cols = saved.cols;
-    score = saved.score;
-    moveCount = saved.moveCount;
-    activeBuffs = saved.activeBuffs;
-    activeBonuses = saved.activeBonuses;
-    hasMerged2048ThisTurn = false;
-    mergeablePairs = [];
-    newTileSpawn = null;
-    milestoneReached = new Set();
-    mergeCountThisMove = 0;
-    // 从存档恢复时炸弹状态不可恢复，初始化空 bombGrid
-    bombGrid = [];
-    for (let r = 0; r < rows; r++) bombGrid[r] = new Array(cols).fill(false);
-    phase = 'playing';
+    // 有存档，询问继续还是重开
+    const buffNames = saved.activeBuffs.map(b => b.name).join('、') || '无';
+    const html = `
+      <h2>检测到上次游戏</h2>
+      <div class="subtitle">分数: <b style="color:#e94560">${saved.score}</b> | 步数: ${saved.moveCount} | 棋盘: ${saved.rows}×${saved.cols}</div>
+      <div class="subtitle" style="margin-top:4px">Buff: ${buffNames}</div>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
+        <button class="btn secondary" onclick="clearSave();hidePopup();resizeCanvas();showBuffSelect();">新游戏</button>
+        <button class="btn" onclick="restoreSave()">继续游戏</button>
+      </div>
+    `;
+    showPopup(html);
     resizeCanvas();
-    hintText.textContent = hasBuff('manual_merge') ? '方向键滑动（手动合成模式）' : '方向键滑动';
-    render();
-    updateUI();
   } else {
     resizeCanvas();
     showBuffSelect();
   }
+}
+
+function restoreSave() {
+  const saved = loadGame();
+  if (!saved) { hidePopup(); showBuffSelect(); return; }
+  grid = saved.grid;
+  rows = saved.rows;
+  cols = saved.cols;
+  score = saved.score;
+  moveCount = saved.moveCount;
+  activeBuffs = saved.activeBuffs;
+  activeBonuses = saved.activeBonuses;
+  hasMerged2048ThisTurn = false;
+  mergeablePairs = [];
+  newTileSpawn = null;
+  milestoneReached = new Set();
+  mergeCountThisMove = 0;
+  bombGrid = [];
+  for (let r = 0; r < rows; r++) bombGrid[r] = new Array(cols).fill(false);
+  phase = 'playing';
+  hidePopup();
+  resizeCanvas();
+  hintText.textContent = hasBuff('manual_merge') ? '方向键滑动（手动合成模式）' : '方向键滑动';
+  render();
+  updateUI();
 }
 
 resizeCanvas();
