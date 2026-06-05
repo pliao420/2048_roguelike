@@ -718,7 +718,7 @@ function moveGrid(direction) {
 
   if (changed) {
     // 生成滑动动画
-    slideAnims = buildSlideAnims(oldGrid, grid);
+    slideAnims = buildSlideAnims(oldGrid, grid, direction);
 
     // 连击奖励：多个合并额外加分
     if (hasBuff('combo') && mergeCountThisMove > 1) {
@@ -778,47 +778,50 @@ function slideBombsNoMerge(line, bombLine, direction) {
   return bResult;
 }
 
-// 构建滑动动画数据（比较新旧棋盘，匹配移动/合并的方块）
-function buildSlideAnims(oldGrid, newGrid) {
+// 构建滑动动画数据（沿滑动方向追溯每个方块的真实来源）
+function buildSlideAnims(oldGrid, newGrid, direction) {
   const anims = [];
   const usedOld = new Set();
 
-  // 第一遍：精确匹配（方块仅滑动，未合并）
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (newGrid[r][c] === 0) continue;
-      const v = newGrid[r][c];
-      for (let or2 = 0; or2 < rows; or2++) {
-        for (let oc = 0; oc < cols; oc++) {
-          const key = `${or2},${oc}`;
-          if (oldGrid[or2][oc] === v && !usedOld.has(key)) {
-            if (or2 !== r || oc !== c) {
-              anims.push({ v, fromX: cellX(oc), fromY: cellY(or2), toX: cellX(c), toY: cellY(r), t: 0 });
-            }
-            usedOld.add(key);
-            or2 = rows; break; // break outer loop
-          }
-        }
-      }
-    }
-  }
+  // 沿滑动相反方向搜索：方块只能从那个方向来
+  const searchDirs = [
+    [1, 0],  // 0=up: 从下方来，向下搜
+    [0, -1], // 1=right: 从左边来，向左搜
+    [-1, 0], // 2=down: 从上方来，向上搜
+    [0, 1],  // 3=left: 从右边来，向右搜
+  ];
+  const [sdr, sdc] = searchDirs[direction];
 
-  // 第二遍：合并匹配（新方块值 = 旧方块值的2倍）
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (newGrid[r][c] === 0) continue;
-      if (anims.some(a => a.toX === cellX(c) && a.toY === cellY(r))) continue;
       const v = newGrid[r][c];
-      for (let or2 = 0; or2 < rows; or2++) {
-        for (let oc = 0; oc < cols; oc++) {
-          const key = `${or2},${oc}`;
-          if (oldGrid[or2][oc] === v / 2 && !usedOld.has(key)) {
-            anims.push({ v, fromX: cellX(oc), fromY: cellY(or2), toX: cellX(c), toY: cellY(r), t: 0 });
-            usedOld.add(key);
-            or2 = rows; break;
-          }
-        }
+
+      // 沿来源方向搜索候选方块（距离递增）
+      const candidates = [];
+      for (let dist = 0; dist < Math.max(rows, cols); dist++) {
+        const or = r + sdr * dist;
+        const oc = c + sdc * dist;
+        if (or < 0 || or >= rows || oc < 0 || oc >= cols) break;
+        const key = `${or},${oc}`;
+        if (usedOld.has(key) || oldGrid[or][oc] === 0) continue;
+        if (oldGrid[or][oc] === v) candidates.push({ or, oc, dist, type: 'slide' });
+        else if (oldGrid[or][oc] === v / 2) candidates.push({ or, oc, dist, type: 'merge' });
       }
+
+      if (candidates.length === 0) continue;
+
+      // 优先精确同值，再按距离近的选
+      candidates.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'slide' ? -1 : 1;
+        return a.dist - b.dist;
+      });
+
+      const best = candidates[0];
+      if (best.or !== r || best.oc !== c) {
+        anims.push({ v, fromX: cellX(best.oc), fromY: cellY(best.or), toX: cellX(c), toY: cellY(r), t: 0 });
+      }
+      usedOld.add(`${best.or},${best.oc}`);
     }
   }
 
