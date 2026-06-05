@@ -339,7 +339,10 @@ let phase = 'buff_select'; // buff_select | playing | animating | merge_select |
 let spawnedThisTurn = false;
 let hasMerged2048ThisTurn = false;
 let mergeablePairs = []; // [{r1,c1,r2,c2}] for manual merge mode
-let lastDirection = 0; // last move direction for manual merge mode post-move effects // [{r,c,fromX,fromY,toX,toY,progress}]
+let lastDirection = 0; // last move direction for manual merge mode post-move effects
+let bombGrid = []; // 2D array: bombGrid[r][c] = true if tile has bomb
+let mergeCountThisMove = 0; // tracks merges in current move for combo buff
+let milestoneReached = new Set(); // tracks which move-count milestones have triggered // [{r,c,fromX,fromY,toX,toY,progress}]
 let newTileSpawn = null; // {r,c,value}
 let movingTiles = []; // tiles being animated
 
@@ -369,23 +372,51 @@ const ALL_BUFFS = [
   {
     id: 'big_start',
     name: '强势开局',
-    desc: '初始棋盘额外预置一个 16 和一个 8',
+    desc: '初始棋盘预置一个 512 和一个 256，快速冲向高分段',
     icon: '🚀',
     color: '#e94560',
   },
   {
     id: 'score_boost',
     name: '分数加成',
-    desc: '每次合成获得的分数 +50%',
+    desc: '每次合成获得的分数 +20%',
     icon: '⭐',
     color: '#edc22e',
   },
   {
     id: 'second_chance',
     name: '复活机会',
-    desc: '游戏结束时，自动清空棋盘上最小的一半数字块，仅生效一次',
+    desc: '游戏结束时自动清空棋盘上最小的一半数字块，仅生效一次',
     icon: '💫',
     color: '#be2edd',
+  },
+  {
+    id: 'bomb_tile',
+    name: '炸弹数字',
+    desc: '5% 概率生成炸弹方块，点击炸弹引爆清除周围 3×3 所有数字并获得分数',
+    icon: '💣',
+    color: '#ff4757',
+  },
+  {
+    id: 'magnet',
+    name: '磁力吸附',
+    desc: '每次移动后，相邻相同数字额外自动合并一次',
+    icon: '🧲',
+    color: '#7bed9f',
+  },
+  {
+    id: 'airdrop',
+    name: '空降支援',
+    desc: '每 10 步在随机空格生成一个 64',
+    icon: '🪂',
+    color: '#74b9ff',
+  },
+  {
+    id: 'combo',
+    name: '连击奖励',
+    desc: '单次移动合并多个数字时，每个额外合并 +30% 分数',
+    icon: '🔥',
+    color: '#e17055',
   },
 ];
 
@@ -480,8 +511,10 @@ function cellY(r) { return PADDING + GAP + r * (CELL_SIZE + GAP); }
 // ==================== 棋盘逻辑 ====================
 function initGrid() {
   grid = [];
+  bombGrid = [];
   for (let r = 0; r < rows; r++) {
     grid[r] = new Array(cols).fill(0);
+    bombGrid[r] = new Array(cols).fill(false);
   }
 }
 
@@ -508,6 +541,7 @@ function spawnTile(value) {
     }
   }
   grid[r][c] = value;
+  bombGrid[r][c] = hasBuff('bomb_tile') && Math.random() < 0.05;
   newTileSpawn = {r, c, value, time: Date.now()};
   return {r, c, value};
 }
@@ -521,14 +555,23 @@ function shouldSkipSpawn() {
 }
 
 // ==================== 移动逻辑 ====================
-function slideLine(line) {
-  const filtered = line.filter(v => v !== 0);
+function slideLine(line, bombLine) {
+  const filtered = [];
+  const filteredBombs = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== 0) {
+      filtered.push(line[i]);
+      filteredBombs.push(bombLine ? bombLine[i] : false);
+    }
+  }
   const result = [];
+  const bombResult = [];
   let scoreGain = 0;
   let i = 0;
   while (i < filtered.length) {
     if (i + 1 < filtered.length && filtered[i] === filtered[i + 1]) {
       let mergeVal = filtered[i] * 2;
+      const mergedBomb = filteredBombs[i] || filteredBombs[i + 1];
       // 应用有针对数字的加成
       for (const bonus of activeBonuses) {
         if (bonus.targetNumber && bonus.targetNumber === filtered[i] && bonus.apply) {
@@ -544,8 +587,9 @@ function slideLine(line) {
         }
       }
       result.push(mergeVal);
+      bombResult.push(mergedBomb);
       scoreGain += mergeVal;
-      // 双重打击：合成8及以上额外加分
+      mergeCountThisMove++;
       if (mergeVal >= 8) {
         for (const bonus of activeBonuses) {
           if (bonus.id === 'double_trouble') scoreGain += Math.floor(mergeVal / 2);
@@ -555,11 +599,15 @@ function slideLine(line) {
       i += 2;
     } else {
       result.push(filtered[i]);
+      bombResult.push(filteredBombs[i]);
       i++;
     }
   }
-  while (result.length < line.length) result.push(0);
-  return { result, scoreGain };
+  while (result.length < line.length) {
+    result.push(0);
+    bombResult.push(false);
+  }
+  return { result, scoreGain, bombResult };
 }
 
 function slideLineNoMerge(line) {
@@ -583,22 +631,24 @@ function moveGrid(direction) {
   // direction: 0=up, 1=right, 2=down, 3=left
   lastDirection = direction;
   const oldGrid = grid.map(r => [...r]);
+  const oldBombGrid = bombGrid.map(r => [...r]);
   let totalScore = 0;
+  mergeCountThisMove = 0;
   mergeablePairs = [];
   hasMerged2048ThisTurn = false;
 
   if (hasBuff('manual_merge')) {
-    // 手动合成模式：只滑动不合并
+    // 手动合成模式：只滑动不合并（炸弹随滑块移动）
     if (direction === 0 || direction === 2) {
-      // 上下：按列处理
       for (let c = 0; c < cols; c++) {
-        let line = [];
-        for (let r = 0; r < rows; r++) line.push(grid[r][c]);
-        if (direction === 2) line.reverse();
+        let line = [], bLine = [];
+        for (let r = 0; r < rows; r++) { line.push(grid[r][c]); bLine.push(bombGrid[r][c]); }
+        if (direction === 2) { line.reverse(); bLine.reverse(); }
         const { result } = slideLineNoMerge(line);
         if (direction === 2) result.reverse();
-        for (let r = 0; r < rows; r++) grid[r][c] = result[r];
-        // 查找可合并对
+        // 炸弹跟着移动
+        const bResult = slideBombsNoMerge(line, bLine, direction);
+        for (let r = 0; r < rows; r++) { grid[r][c] = result[r]; bombGrid[r][c] = bResult[r]; }
         if (direction === 2) result.reverse();
         const pairs = findMergeablePairs(result);
         for (const p of pairs) {
@@ -608,13 +658,13 @@ function moveGrid(direction) {
         }
       }
     } else {
-      // 左右：按行处理
       for (let r = 0; r < rows; r++) {
-        let line = [...grid[r]];
-        if (direction === 1) line.reverse();
+        let line = [...grid[r]], bLine = [...bombGrid[r]];
+        if (direction === 1) { line.reverse(); bLine.reverse(); }
         const { result } = slideLineNoMerge(line);
         if (direction === 1) result.reverse();
-        grid[r] = result;
+        const bResult = slideBombsNoMerge(line, bLine, direction);
+        grid[r] = result; bombGrid[r] = bResult;
         if (direction === 1) result.reverse();
         const pairs = findMergeablePairs(result);
         for (const p of pairs) {
@@ -625,27 +675,32 @@ function moveGrid(direction) {
       }
     }
   } else {
-    // 自动合成模式
+    // 自动合成模式（炸弹随合成继承）
     if (direction === 0 || direction === 2) {
       for (let c = 0; c < cols; c++) {
-        let line = [];
-        for (let r = 0; r < rows; r++) line.push(grid[r][c]);
-        if (direction === 2) line.reverse();
-        const { result, scoreGain } = slideLine(line);
-        if (direction === 2) result.reverse();
-        for (let r = 0; r < rows; r++) grid[r][c] = result[r];
+        let line = [], bLine = [];
+        for (let r = 0; r < rows; r++) { line.push(grid[r][c]); bLine.push(bombGrid[r][c]); }
+        if (direction === 2) { line.reverse(); bLine.reverse(); }
+        const { result, scoreGain, bombResult } = slideLine(line, bLine);
+        if (direction === 2) { result.reverse(); bombResult.reverse(); }
+        for (let r = 0; r < rows; r++) { grid[r][c] = result[r]; bombGrid[r][c] = bombResult[r]; }
         totalScore += scoreGain;
       }
     } else {
       for (let r = 0; r < rows; r++) {
-        let line = [...grid[r]];
-        if (direction === 1) line.reverse();
-        const { result, scoreGain } = slideLine(line);
-        if (direction === 1) result.reverse();
-        grid[r] = result;
+        let line = [...grid[r]], bLine = [...bombGrid[r]];
+        if (direction === 1) { line.reverse(); bLine.reverse(); }
+        const { result, scoreGain, bombResult } = slideLine(line, bLine);
+        if (direction === 1) { result.reverse(); bombResult.reverse(); }
+        grid[r] = result; bombGrid[r] = bombResult;
         totalScore += scoreGain;
       }
     }
+  }
+
+  // 磁力吸附：再次扫描，相邻相同数字自动合并一次
+  if (!hasBuff('manual_merge') && hasBuff('magnet')) {
+    totalScore += applyMagnet();
   }
 
   // 检查是否有变化
@@ -655,7 +710,11 @@ function moveGrid(direction) {
       if (grid[r][c] !== oldGrid[r][c]) changed = true;
 
   if (changed) {
-    if (hasBuff('score_boost')) totalScore = Math.floor(totalScore * 1.5);
+    // 连击奖励：多个合并额外加分
+    if (hasBuff('combo') && mergeCountThisMove > 1) {
+      totalScore += Math.floor(totalScore * 0.3 * (mergeCountThisMove - 1));
+    }
+    if (hasBuff('score_boost')) totalScore = Math.floor(totalScore * 1.2);
     score += totalScore;
     moveCount++;
 
@@ -671,13 +730,87 @@ function moveGrid(direction) {
     }
   }
 
-  // 自动合成模式下应用 growing_tile 和 clone_walk 加成
-  // （手动合成模式下这些效果在 endManualMergeTurn 中触发）
+  // 空降支援：每10步生成一个64
+  if (changed && hasBuff('airdrop') && moveCount % 10 === 0) {
+    const empty = getEmptyCells();
+    if (empty.length > 0) {
+      const pos = empty[randInt(empty.length)];
+      grid[pos.r][pos.c] = 64;
+      bombGrid[pos.r][pos.c] = hasBuff('bomb_tile') && Math.random() < 0.05;
+    }
+  }
+
+  // 自动合成模式下应用 growing_tile 和 clone_walk
   if (changed && !hasBuff('manual_merge')) {
     applyPostMoveBonuses(direction);
   }
 
+  // 里程碑检查：每100步触发一次 Buff 选择
+  if (changed && moveCount > 0 && moveCount % 100 === 0 && !milestoneReached.has(moveCount)) {
+    milestoneReached.add(moveCount);
+    showMilestoneBuffSelect();
+  }
+
   return { changed, totalScore };
+}
+
+// 手动模式下炸弹跟随滑块移动（不合并）
+function slideBombsNoMerge(line, bombLine, direction) {
+  const filtered = [];
+  const filteredBombs = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== 0) { filtered.push(line[i]); filteredBombs.push(bombLine[i]); }
+  }
+  while (filtered.length < line.length) { filtered.push(0); filteredBombs.push(false); }
+  const result = direction === 1 ? filtered.reverse() : filtered;
+  const bResult = direction === 1 ? filteredBombs.reverse() : filteredBombs;
+  if (direction === 2 || direction === 1) { result.reverse(); bResult.reverse(); }
+  return bResult;
+}
+
+// 磁力吸附：扫描全棋盘，相邻相同数字合并
+function applyMagnet() {
+  let gain = 0;
+  let merged;
+  do {
+    merged = false;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r][c] === 0) continue;
+        // 检查右边
+        if (c + 1 < cols && grid[r][c] === grid[r][c + 1]) {
+          let mv = grid[r][c] * 2;
+          for (const bonus of activeBonuses) {
+            if (bonus.targetNumber && bonus.targetNumber === grid[r][c] && bonus.apply) { mv = bonus.apply(mv); break; }
+            if (!bonus.targetNumber && bonus.apply) { mv = bonus.apply(mv); break; }
+          }
+          bombGrid[r][c + 1] = bombGrid[r][c] || bombGrid[r][c + 1];
+          bombGrid[r][c] = false;
+          grid[r][c + 1] = mv;
+          grid[r][c] = 0;
+          gain += mv;
+          if (mv === 2048) hasMerged2048ThisTurn = true;
+          merged = true;
+        }
+        // 检查下边
+        if (r + 1 < rows && grid[r][c] === grid[r + 1][c]) {
+          let mv = grid[r][c] * 2;
+          for (const bonus of activeBonuses) {
+            if (bonus.targetNumber && bonus.targetNumber === grid[r][c] && bonus.apply) { mv = bonus.apply(mv); break; }
+            if (!bonus.targetNumber && bonus.apply) { mv = bonus.apply(mv); break; }
+          }
+          bombGrid[r + 1][c] = bombGrid[r][c] || bombGrid[r + 1][c];
+          bombGrid[r][c] = false;
+          grid[r + 1][c] = mv;
+          grid[r][c] = 0;
+          gain += mv;
+          if (mv === 2048) hasMerged2048ThisTurn = true;
+          merged = true;
+        }
+      }
+    }
+  } while (merged);
+  return gain;
 }
 
 function applyPostMoveBonuses(direction) {
@@ -720,8 +853,12 @@ function applyManualMerge(r1, c1, r2, c2) {
     }
   }
 
+  const mergedBomb = bombGrid[r1][c1] || bombGrid[r2][c2];
   grid[r1][c1] = 0;
+  bombGrid[r1][c1] = false;
   grid[r2][c2] = mergeVal;
+  bombGrid[r2][c2] = mergedBomb;
+  mergeCountThisMove++;
   let gain = mergeVal;
   if (hasBuff('score_boost')) gain = Math.floor(gain * 1.5);
   score += gain;
@@ -770,12 +907,35 @@ function findAllMergeablePairs() {
 function endManualMergeTurn() {
   mergeablePairs = [];
   endTurnBtn.classList.remove('visible');
+  // 手动合成后应用磁力吸附
+  let magnetGain = 0;
+  if (hasBuff('magnet')) magnetGain = applyMagnet();
+  // 连击奖励
+  if (hasBuff('combo') && mergeCountThisMove > 1) {
+    const bonusScore = Math.floor((mergeCountThisMove - 1) * 0.3 * 100);
+    score += bonusScore;
+  }
   if (!shouldSkipSpawn()) {
     spawnTile();
+  }
+  // 空降支援
+  if (hasBuff('airdrop') && moveCount % 10 === 0) {
+    const empty = getEmptyCells();
+    if (empty.length > 0) {
+      const pos = empty[randInt(empty.length)];
+      grid[pos.r][pos.c] = 64;
+      bombGrid[pos.r][pos.c] = hasBuff('bomb_tile') && Math.random() < 0.05;
+    }
   }
   // 手动合成完成后应用加成效果
   applyPostMoveBonuses(lastDirection);
   saveGame();
+  // 里程碑检查
+  if (moveCount > 0 && moveCount % 100 === 0 && !milestoneReached.has(moveCount)) {
+    milestoneReached.add(moveCount);
+    showMilestoneBuffSelect();
+    return;
+  }
   if (hasMerged2048ThisTurn) {
     showBonusSelect();
     return;
@@ -787,6 +947,23 @@ function endManualMergeTurn() {
   phase = 'playing';
   hintText.textContent = hasBuff('manual_merge') ? '方向键滑动（手动合成模式）' : '方向键滑动';
   render();
+}
+
+// 炸弹引爆：清除 3×3 区域，获得分数
+function explodeBomb(r, c) {
+  let clearScore = 0;
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] > 0) {
+        clearScore += grid[nr][nc];
+        grid[nr][nc] = 0;
+        bombGrid[nr][nc] = false;
+      }
+    }
+  }
+  if (hasBuff('score_boost')) clearScore = Math.floor(clearScore * 1.2);
+  score += clearScore;
 }
 
 // 分裂功能
@@ -803,8 +980,11 @@ function splitTile(r, c) {
   }
   if (adj.length === 0) return false;
   const pos = adj[randInt(adj.length)];
+  const hadBomb = bombGrid[r][c];
   grid[r][c] = half;
   grid[pos.r][pos.c] = half;
+  bombGrid[r][c] = hadBomb; // 原位置保留炸弹
+  bombGrid[pos.r][pos.c] = false;
   return true;
 }
 
@@ -832,7 +1012,10 @@ function checkGameOver() {
         if (grid[r][c] > 0) tiles.push({r, c, v: grid[r][c]});
     tiles.sort((a, b) => a.v - b.v);
     const removeCount = Math.floor(tiles.length / 2);
-    for (let i = 0; i < removeCount; i++) grid[tiles[i].r][tiles[i].c] = 0;
+    for (let i = 0; i < removeCount; i++) {
+      grid[tiles[i].r][tiles[i].c] = 0;
+      bombGrid[tiles[i].r][tiles[i].c] = false;
+    }
     activeBuffs.find(b => b.id === 'second_chance').used = true;
     render();
     updateUI();
@@ -908,6 +1091,22 @@ function render() {
           ctx.shadowColor = 'transparent';
           ctx.lineWidth = 1;
         }
+      }
+
+      // 炸弹标记：方块右上角显示 💣，红色脉冲边框
+      if (bombGrid[r][c]) {
+        const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+        ctx.strokeStyle = `rgba(255, 71, 87, ${0.5 + pulse * 0.5})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        roundRect(ctx, x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#ff4757';
+        ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('💣', x + CELL_SIZE - 4, y + 4);
       }
 
       // 文字
@@ -1052,12 +1251,15 @@ function selectExpand(type) {
   if (type === 'row') {
     const insertAt = randInt(rows + 1);
     const newRow = new Array(cols).fill(0);
+    const newBombRow = new Array(cols).fill(false);
     grid.splice(insertAt, 0, newRow);
+    bombGrid.splice(insertAt, 0, newBombRow);
     rows++;
   } else if (type === 'col') {
     const insertAt = randInt(cols + 1);
     for (let r = 0; r < rows; r++) {
       grid[r].splice(insertAt, 0, 0);
+      bombGrid[r].splice(insertAt, 0, false);
     }
     cols++;
   }
@@ -1235,6 +1437,37 @@ function escHtml(s) {
   return div.innerHTML;
 }
 
+// 百步里程碑：额外 Buff 选择
+function showMilestoneBuffSelect() {
+  const available = ALL_BUFFS.filter(b => !activeBuffs.some(ab => ab.id === b.id));
+  if (available.length === 0) return;
+  const options = pickRandom(available, Math.min(3, available.length));
+  const html = `
+    <h2>🎯 第 ${moveCount} 步里程碑！</h2>
+    <div class="subtitle">获得一次额外 Buff 选择</div>
+    <div class="cards">
+      ${options.map(b => `
+        <div class="card" onclick="selectMilestoneBuff('${b.id}')">
+          <div class="card-icon" style="background:${b.color}22;border:2px solid ${b.color}44">${b.icon}</div>
+          <div class="card-info">
+            <div class="card-name" style="color:${b.color}">${b.name}</div>
+            <div class="card-desc">${b.desc}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  showPopup(html);
+}
+
+function selectMilestoneBuff(id) {
+  const buff = ALL_BUFFS.find(b => b.id === id);
+  activeBuffs.push({...buff, used: false});
+  hidePopup();
+  updateUI();
+  render();
+}
+
 // ==================== 游戏流程 ====================
 function startGame() {
   initGrid();
@@ -1244,14 +1477,16 @@ function startGame() {
   hasMerged2048ThisTurn = false;
   mergeablePairs = [];
   newTileSpawn = null;
+  milestoneReached = new Set();
+  mergeCountThisMove = 0;
 
   if (hasBuff('big_start')) {
     const empty = getEmptyCells();
     if (empty.length >= 2) {
       const p1 = empty.splice(randInt(empty.length), 1)[0];
-      grid[p1.r][p1.c] = 16;
+      grid[p1.r][p1.c] = 512;
       const p2 = empty[randInt(empty.length)];
-      grid[p2.r][p2.c] = 8;
+      grid[p2.r][p2.c] = 256;
     }
   } else {
     spawnTile();
@@ -1329,6 +1564,9 @@ function handleMove(dir) {
 
   // 手动合并模式：等待玩家点击合并
   if (phase === 'merge_select') return;
+
+  // 如果有弹出层（里程碑等），跳过后续检查
+  if (overlay.classList.contains('active')) return;
 
   // 自动合成模式：检查2048奖励和游戏结束
   saveGame();
@@ -1411,6 +1649,15 @@ function handleTap(e) {
 
   if (clickedR < 0) return;
 
+  // 炸弹引爆
+  if (phase === 'playing' && bombGrid[clickedR][clickedC]) {
+    explodeBomb(clickedR, clickedC);
+    render();
+    updateUI();
+    if (checkGameOver()) showGameOver();
+    return;
+  }
+
   // 分裂模式（加成）
   if (phase === 'playing' && hasBonus('split_master') && grid[clickedR][clickedC] >= 4) {
     if (splitTile(clickedR, clickedC)) {
@@ -1463,6 +1710,11 @@ function initGame() {
     hasMerged2048ThisTurn = false;
     mergeablePairs = [];
     newTileSpawn = null;
+    milestoneReached = new Set();
+    mergeCountThisMove = 0;
+    // 从存档恢复时炸弹状态不可恢复，初始化空 bombGrid
+    bombGrid = [];
+    for (let r = 0; r < rows; r++) bombGrid[r] = new Array(cols).fill(false);
     phase = 'playing';
     resizeCanvas();
     hintText.textContent = hasBuff('manual_merge') ? '方向键滑动（手动合成模式）' : '方向键滑动';
