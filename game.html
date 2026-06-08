@@ -234,6 +234,49 @@ canvas {
   background: #0f3460;
   color: #53d8fb;
 }
+#popup .btn.fruit-btn {
+  background: linear-gradient(135deg, #27ae60, #2ecc71);
+  color: #fff;
+  font-size: 20px;
+  padding: 16px 32px;
+}
+#popup .btn.classic-btn {
+  background: linear-gradient(135deg, #0f3460, #1a4d7e);
+  color: #edc22e;
+  font-size: 20px;
+  padding: 16px 32px;
+}
+#popup .mode-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#popup .mode-card {
+  background: #16213e;
+  border: 2px solid #0f3460;
+  border-radius: 14px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.25s;
+  text-align: center;
+}
+#popup .mode-card:active, #popup .mode-card:hover {
+  transform: scale(1.03);
+}
+#popup .mode-card.fruit { border-color: #27ae6044; }
+#popup .mode-card.fruit:hover { border-color: #27ae60; background: #162420; }
+#popup .mode-card.classic { border-color: #0f3460; }
+#popup .mode-card.classic:hover { border-color: #edc22e; background: #1a2744; }
+#popup .mode-emoji { font-size: 48px; margin-bottom: 8px; }
+#popup .mode-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+#popup .mode-desc { font-size: 12px; color: #7b8ab4; }
+#mode-indicator {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
 #end-turn-btn {
   background: #e94560;
   color: #fff;
@@ -328,7 +371,99 @@ const TILE_TEXT_COLORS = {};
   [8192, '#3c3a32', '#f9f6f2'],
 ].forEach(([v, bg, fg]) => { TILE_COLORS[v] = bg; TILE_TEXT_COLORS[v] = fg; });
 
+// 水果模式数据
+const FRUIT_DATA = {
+  2:    { name:'樱桃', emoji:'🍒', baseColor:'#dc143c', grad:['#ff6b6b','#dc143c'] },
+  4:    { name:'苹果', emoji:'🍎', baseColor:'#e74c3c', grad:['#ff7675','#d63031'] },
+  8:    { name:'橙子', emoji:'🍊', baseColor:'#f39c12', grad:['#fdcb6e','#e17055'] },
+  16:   { name:'柠檬', emoji:'🍋', baseColor:'#f1c40f', grad:['#ffeaa7','#f9ca24'] },
+  32:   { name:'蓝莓', emoji:'🫐', baseColor:'#3498db', grad:['#74b9ff','#2980b9'] },
+  64:   { name:'葡萄', emoji:'🍇', baseColor:'#8e44ad', grad:['#a29bfe','#6c5ce7'] },
+  128:  { name:'蜜桃', emoji:'🍑', baseColor:'#e17055', grad:['#fab1a0','#e17055'] },
+  256:  { name:'菠萝', emoji:'🍍', baseColor:'#e67e22', grad:['#fdcb6e','#d35400'] },
+  512:  { name:'猕猴桃', emoji:'🥝', baseColor:'#27ae60', grad:['#55efc4','#16a085'] },
+  1024: { name:'蜜瓜', emoji:'🍈', baseColor:'#2ecc71', grad:['#7bed9f','#27ae60'] },
+  2048: { name:'西瓜', emoji:'🍉', baseColor:'#2ecc71', grad:['#ff7675','#c0392b'], mega:true },
+  4096: { name:'皇冠果', emoji:'👑', baseColor:'#f1c40f', grad:['#ffeaa7','#f39c12'], mega:true },
+  8192: { name:'钻石果', emoji:'💎', baseColor:'#3498db', grad:['#74b9ff','#0984e3'], mega:true },
+};
+for (let v = 16384; v <= 131072; v *= 2) {
+  FRUIT_DATA[v] = { name:'传奇果', emoji:'🌟', baseColor:'#f1c40f', grad:['#fffacd','#ffd700'], mega:true };
+}
+
+// 音效系统
+let audioCtx = null, audioEnabled = true;
+function initAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function playNote(freq, delay, dur, vol, type) {
+  if (!audioCtx || audioCtx.state === 'suspended') return;
+  try {
+    const t = audioCtx.currentTime + delay;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = Math.min(freq, 8000);
+    gain.gain.setValueAtTime(Math.min(vol, 0.3), t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + dur + 0.01);
+  } catch(e) {}
+}
+function playMergeSound(value) {
+  if (!audioCtx || !audioEnabled) return;
+  const lv = Math.log2(value);
+  const f = 220 + lv * 70;
+  playNote(f, 0, 0.13, 0.08 + lv * 0.012, 'triangle');
+  playNote(f * 1.25, 0.03, 0.1, (0.06 + lv * 0.008) * 0.7, 'sine');
+  if (lv >= 6) { playNote(f * 2, 0.05, 0.09, 0.04 + lv * 0.005, 'sine'); }
+  if (lv >= 9) { playNote(f * 3, 0.08, 0.08, 0.03 + lv * 0.003, 'sine'); playNote(f * 1.5, 0.10, 0.1, 0.04, 'triangle'); }
+}
+function playMoveSound() {
+  if (!audioCtx || !audioEnabled) return;
+  playNote(180, 0, 0.04, 0.03, 'sine');
+}
+
+// 特效系统
+let particles = [];
+let screenShake = 0;
+let flashAlpha = 0;
+let mergeResults = [];
+
+function spawnParticles(x, y, value) {
+  const lv = Math.log2(value);
+  const count = Math.min(Math.floor(lv * 4), 40);
+  const hue = (lv * 30) % 360;
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * lv * 0.8;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.035,
+      color: `hsl(${hue + Math.random() * 40}, 80%, ${50 + Math.random() * 25}%)`,
+      size: 2 + Math.random() * 5,
+    });
+  }
+}
+function triggerMergeEffect(r, c, value) {
+  const cx = cellX(c) + CELL_SIZE / 2;
+  const cy = cellY(r) + CELL_SIZE / 2;
+  mergeResults.push({ r, c, value, time: Date.now() });
+  spawnParticles(cx, cy, value);
+  playMergeSound(value);
+  const lv = Math.log2(value);
+  if (lv >= 8) { screenShake = Math.min(screenShake + lv * 0.8, 20); flashAlpha = Math.min(flashAlpha + 0.3, 0.8); }
+  else if (lv >= 5) { screenShake = Math.min(screenShake + lv * 0.3, 8); }
+}
+
 // ==================== 游戏状态 ====================
+let gameMode = 'classic'; // 'classic' | 'fruit'
 let grid = [];
 let rows = 4, cols = 4;
 let score = 0;
@@ -719,6 +854,18 @@ function moveGrid(direction) {
     score += totalScore;
     moveCount++;
 
+    // 水果模式：检测合并产生特效
+    if (gameMode === 'fruit') {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (grid[r][c] > 0 && oldGrid[r][c] > 0 && grid[r][c] > oldGrid[r][c]) {
+            triggerMergeEffect(r, c, grid[r][c]);
+          }
+        }
+      }
+      playMoveSound();
+    }
+
     if (hasBuff('manual_merge') && mergeablePairs.length > 0) {
       phase = 'merge_select';
       hintText.textContent = '点击高亮的数字对来合成';
@@ -860,6 +1007,7 @@ function applyManualMerge(r1, c1, r2, c2) {
   grid[r2][c2] = mergeVal;
   bombGrid[r2][c2] = mergedBomb;
   mergeCountThisMove++;
+  if (gameMode === 'fruit') triggerMergeEffect(r2, c2, mergeVal);
   let gain = mergeVal;
   if (hasBuff('score_boost')) gain = Math.floor(gain * 1.5);
   score += gain;
@@ -1030,11 +1178,21 @@ function render() {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
+  // 屏幕震动偏移
+  let sx = 0, sy = 0;
+  if (screenShake > 0.01) {
+    sx = (Math.random() - 0.5) * screenShake * 2;
+    sy = (Math.random() - 0.5) * screenShake * 2;
+  }
+
+  ctx.save();
+  ctx.translate(sx, sy);
+
   // 背景网格
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const x = cellX(c), y = cellY(r);
-      ctx.fillStyle = '#0f3460';
+      ctx.fillStyle = gameMode === 'fruit' ? '#1a4d2e' : '#0f3460';
       ctx.beginPath();
       roundRect(ctx, x, y, CELL_SIZE, CELL_SIZE, 8);
       ctx.fill();
@@ -1056,71 +1214,190 @@ function render() {
     }
   }
 
-  // 数字块
+  // 方块
   const now = Date.now();
-  // 绘制方块
+
+  // 找出刚合并的方块位置（用于动画跳动）
+  const mergedKeys = new Set();
+  const activeMerges = mergeResults.filter(m => now - m.time < 400);
+  for (const m of activeMerges) mergedKeys.add(`${m.r},${m.c}`);
+
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (grid[r][c] === 0) continue;
       const key = `${r},${c}`;
       const v = grid[r][c];
-      const x = cellX(c), y = cellY(r);
+      let xx = cellX(c), yy = cellY(r);
 
-      const bgColor = TILE_COLORS[v] || '#3c3a32';
-      const textColor = TILE_TEXT_COLORS[v] || '#f9f6f2';
-
-      // 绘制数字块
-      ctx.fillStyle = bgColor;
-      ctx.shadowColor = 'rgba(0,0,0,0.3)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetY = 2;
-      ctx.beginPath();
-      roundRect(ctx, x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
-      ctx.fill();
-      ctx.shadowColor = 'transparent';
-
-      // 新生成块的标记（红色发光边框，持续 1.5 秒渐隐）
-      if (newTileSpawn && newTileSpawn.r === r && newTileSpawn.c === c) {
-        const elapsed = now - newTileSpawn.time;
-        if (elapsed < 1500) {
-          const alpha = 1 - elapsed / 1500;
-          ctx.strokeStyle = `rgba(233, 69, 96, ${alpha})`;
-          ctx.lineWidth = 3;
-          ctx.shadowColor = `rgba(233, 69, 96, ${alpha * 0.6})`;
-          ctx.shadowBlur = 10;
-          ctx.beginPath();
-          roundRect(ctx, x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
-          ctx.stroke();
-          ctx.shadowColor = 'transparent';
-          ctx.lineWidth = 1;
+      // 合并弹跳动画
+      let scale = 1;
+      if (mergedKeys.has(key)) {
+        const m = mergeResults.find(mr => mr.r === r && mr.c === c);
+        const elapsed = now - m.time;
+        const dur = 400;
+        const t = Math.min(elapsed / dur, 1);
+        // 弹跳曲线：0→1.3→1
+        scale = t < 0.5
+          ? 1 + Math.sin(t * Math.PI) * 0.35
+          : 1 + Math.sin(t * Math.PI) * 0.1 * (1 - t);
+        if (t >= 0.95) scale = 1;
+        if (t >= 1) {
+          mergeResults = mergeResults.filter(mr => mr.r !== r || mr.c !== c);
+          mergedKeys.delete(key);
         }
       }
 
-      // 炸弹标记：方块右上角显示 💣，红色脉冲边框
-      if (bombGrid[r][c]) {
+      if (gameMode === 'fruit') {
+        drawFruitTile(xx, yy, v, scale, now, key);
+      } else {
+        drawClassicTile(xx, yy, v, scale, now, key);
+      }
+
+      // 炸弹标记
+      if (bombGrid[r] && bombGrid[r][c]) {
         const pulse = 0.5 + 0.5 * Math.sin(now / 200);
         ctx.strokeStyle = `rgba(255, 71, 87, ${0.5 + pulse * 0.5})`;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        roundRect(ctx, x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
+        roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
         ctx.stroke();
         ctx.lineWidth = 1;
         ctx.fillStyle = '#ff4757';
         ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText('💣', x + CELL_SIZE - 4, y + 4);
+        ctx.fillText('💣', xx + CELL_SIZE - 4, yy + 4);
       }
-
-      // 文字
-      ctx.fillStyle = textColor;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const fontSize = v < 100 ? 28 : v < 1000 ? 24 : v < 10000 ? 20 : 16;
-      ctx.font = `bold ${fontSize}px "PingFang SC","Microsoft YaHei",sans-serif`;
-      ctx.fillText(v, x + CELL_SIZE / 2, y + CELL_SIZE / 2 + 2);
     }
   }
+
+  ctx.restore();
+
+  // 粒子（不受震动影响）
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 闪光覆盖层
+  if (flashAlpha > 0.005) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+function drawClassicTile(xx, yy, v, scale, now, key) {
+  const bgColor = TILE_COLORS[v] || '#3c3a32';
+  const textColor = TILE_TEXT_COLORS[v] || '#f9f6f2';
+  const cx = xx + CELL_SIZE / 2, cy = yy + CELL_SIZE / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -cy);
+
+  ctx.fillStyle = bgColor;
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 2;
+  ctx.beginPath();
+  roundRect(ctx, xx + 2, yy + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+
+  // 新块标记
+  if (newTileSpawn && newTileSpawn.r !== undefined) {
+    const elapsed = now - newTileSpawn.time;
+    if (elapsed < 1500 && `${newTileSpawn.r},${newTileSpawn.c}` === key) {
+      const alpha = 1 - elapsed / 1500;
+      ctx.strokeStyle = `rgba(233, 69, 96, ${alpha})`;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = `rgba(233, 69, 96, ${alpha * 0.6})`;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
+      ctx.stroke();
+      ctx.shadowColor = 'transparent';
+      ctx.lineWidth = 1;
+    }
+  }
+
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const fontSize = v < 100 ? 28 : v < 1000 ? 24 : v < 10000 ? 20 : 16;
+  ctx.font = `bold ${fontSize}px "PingFang SC","Microsoft YaHei",sans-serif`;
+  ctx.fillText(v, cx, cy + 2);
+  ctx.restore();
+}
+
+function drawFruitTile(xx, yy, v, scale, now, key) {
+  const fd = FRUIT_DATA[v] || { name: v + '', emoji: '❓', baseColor: '#555', grad: ['#666', '#444'] };
+  const cx = xx + CELL_SIZE / 2, cy = yy + CELL_SIZE / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -cy);
+
+  // 渐变背景
+  const grad = ctx.createLinearGradient(xx, yy, xx + CELL_SIZE, yy + CELL_SIZE);
+  grad.addColorStop(0, fd.grad[0]);
+  grad.addColorStop(1, fd.grad[1]);
+  ctx.fillStyle = grad;
+  ctx.shadowColor = fd.mega ? 'rgba(255,215,0,0.6)' : 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = fd.mega ? 12 : 4;
+  ctx.shadowOffsetY = 2;
+  ctx.beginPath();
+  roundRect(ctx, xx + 2, yy + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+
+  // Mega果实的金光旋转边框
+  if (fd.mega) {
+    const phase = Date.now() / 1000;
+    ctx.strokeStyle = `rgba(255, 215, 0, ${0.5 + 0.3 * Math.sin(phase * 2)})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+
+  // 新块标记
+  if (newTileSpawn && newTileSpawn.r !== undefined) {
+    const elapsed = now - newTileSpawn.time;
+    if (elapsed < 1500 && `${newTileSpawn.r},${newTileSpawn.c}` === key) {
+      const alpha = 1 - elapsed / 1500;
+      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = `rgba(255, 215, 0, ${alpha * 0.6})`;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
+      ctx.stroke();
+      ctx.shadowColor = 'transparent';
+      ctx.lineWidth = 1;
+    }
+  }
+
+  // 大号emoji
+  const emojiSize = v < 256 ? 30 : v < 2048 ? 34 : 40;
+  ctx.font = `${emojiSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(fd.emoji, cx, cy - 4);
+
+  // 水果名（小）
+  ctx.fillStyle = v < 64 ? '#333' : '#fff';
+  ctx.font = `bold 10px "PingFang SC","Microsoft YaHei",sans-serif`;
+  ctx.fillText(fd.name, cx, yy + CELL_SIZE - 12);
+
+  ctx.restore();
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -1492,6 +1769,10 @@ function startGame() {
   newTileSpawn = null;
   milestoneReached = new Set();
   mergeCountThisMove = 0;
+  particles = [];
+  screenShake = 0;
+  flashAlpha = 0;
+  mergeResults = [];
 
   if (hasBuff('big_start')) {
     const empty = getEmptyCells();
@@ -1521,8 +1802,7 @@ function restartGame() {
   cols = 4;
   hidePopup();
   resizeCanvas();
-  phase = 'buff_select';
-  showBuffSelect();
+  showModeSelect();
 }
 
 // ==================== 存档系统 ====================
@@ -1531,7 +1811,7 @@ const SAVE_KEY = 'rogue2048_save';
 function saveGame() {
   if (phase === 'buff_select' || phase === 'game_over') return;
   const data = {
-    grid, rows, cols, score, moveCount,
+    gameMode, grid, rows, cols, score, moveCount,
     activeBuffs: activeBuffs.map(b => ({ id: b.id, used: b.used || false })),
     activeBonuses: activeBonuses.map(b => ({ id: b.id })),
     savedAt: Date.now(),
@@ -1707,36 +1987,99 @@ function gameLoop(timestamp) {
   const dt = Math.min(timestamp - lastFrameTime, 50);
   lastFrameTime = timestamp;
 
+  // 更新粒子
+  if (particles.length > 0) {
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.15; // 重力
+      p.life -= p.decay;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+  // 衰减屏幕震动
+  if (screenShake > 0.01) screenShake *= 0.85;
+  else screenShake = 0;
+  // 衰减闪光
+  if (flashAlpha > 0.005) flashAlpha *= 0.9;
+  else flashAlpha = 0;
+
   render();
   requestAnimationFrame(gameLoop);
 }
 
 // ==================== 启动 ====================
 function initGame() {
+  showModeSelect();
+}
+
+function showModeSelect() {
   const saved = loadGame();
-  if (saved) {
-    // 有存档，询问继续还是重开
-    const buffNames = saved.activeBuffs.map(b => b.name).join('、') || '无';
-    const html = `
-      <h2>检测到上次游戏</h2>
-      <div class="subtitle">分数: <b style="color:#e94560">${saved.score}</b> | 步数: ${saved.moveCount} | 棋盘: ${saved.rows}×${saved.cols}</div>
-      <div class="subtitle" style="margin-top:4px">Buff: ${buffNames}</div>
-      <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
-        <button class="btn secondary" onclick="clearSave();hidePopup();resizeCanvas();showBuffSelect();">新游戏</button>
-        <button class="btn" onclick="restoreSave()">继续游戏</button>
+  const hasSavedGame = saved && saved.grid && saved.grid.length > 0;
+  const savedMode = hasSavedGame ? saved.gameMode || 'classic' : null;
+  const html = `
+    <h2>选择模式</h2>
+    <div class="subtitle">${hasSavedGame ? '检测到上次游戏存档，继续或重选模式' : '选择一种玩法开始'}</div>
+    <div class="mode-cards">
+      <div class="mode-card classic" onclick="selectMode('classic', ${hasSavedGame})">
+        <div class="mode-emoji">🔢</div>
+        <div class="mode-name" style="color:#edc22e">经典数字</div>
+        <div class="mode-desc">标准 2048 数字合成，经典配色</div>
       </div>
-    `;
-    showPopup(html);
-    resizeCanvas();
-  } else {
-    resizeCanvas();
-    showBuffSelect();
+      <div class="mode-card fruit" onclick="selectMode('fruit', ${hasSavedGame})">
+        <div class="mode-emoji">🍉</div>
+        <div class="mode-name" style="color:#2ecc71">水果模式</div>
+        <div class="mode-desc">数字变水果，合成有音效和粒子特效，越大越华丽</div>
+      </div>
+    </div>
+    ${hasSavedGame ? `
+    <div style="margin-top:12px;color:#7b8ab4;font-size:12px">
+      上次存档：${savedMode === 'fruit' ? '🍉 水果模式' : '🔢 经典模式'} | 分数: ${saved.score} | ${saved.rows}×${saved.cols}
+    </div>` : ''}
+  `;
+  showPopup(html);
+  resizeCanvas();
+}
+
+function selectMode(mode, hasSaved) {
+  gameMode = mode;
+  hidePopup();
+  // 更新标题
+  document.getElementById('title').textContent = mode === 'fruit' ? '🍉 水果合成' : '2048 Roguelike';
+  // 更新背景主题色
+  document.body.style.background = mode === 'fruit' ? '#1a2e1a' : '#1a1a2e';
+
+  if (hasSaved) {
+    const saved = loadGame();
+    if (saved && saved.gameMode === mode) {
+      // 同模式有存档，询问继续还是重开
+      const buffNames = saved.activeBuffs.map(b => b.name).join('、') || '无';
+      const html = `
+        <h2>检测到上次游戏</h2>
+        <div class="subtitle">分数: <b style="color:#e94560">${saved.score}</b> | 步数: ${saved.moveCount} | 棋盘: ${saved.rows}×${saved.cols}</div>
+        <div class="subtitle" style="margin-top:4px">Buff: ${buffNames}</div>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
+          <button class="btn secondary" onclick="clearSave();hidePopup();resizeCanvas();showBuffSelect();">新游戏</button>
+          <button class="btn" onclick="restoreSave()">继续游戏</button>
+        </div>
+      `;
+      showPopup(html);
+      resizeCanvas();
+      return;
+    }
+    // 不同模式的存档，直接开新游戏
+    clearSave();
   }
+  resizeCanvas();
+  showBuffSelect();
 }
 
 function restoreSave() {
   const saved = loadGame();
   if (!saved) { hidePopup(); showBuffSelect(); return; }
+  gameMode = saved.gameMode || 'classic';
+  document.getElementById('title').textContent = gameMode === 'fruit' ? '🍉 水果合成' : '2048 Roguelike';
+  document.body.style.background = gameMode === 'fruit' ? '#1a2e1a' : '#1a1a2e';
   grid = saved.grid;
   rows = saved.rows;
   cols = saved.cols;
