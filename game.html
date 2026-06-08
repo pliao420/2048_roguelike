@@ -544,8 +544,8 @@ function triggerMergeEffect(r, c, value) {
   spawnParticles(cx, cy, value);
   playMergeSound(value);
   const lv = Math.log2(value);
-  if (lv >= 8) { screenShake = Math.min(screenShake + lv * 0.8, 20); flashAlpha = Math.min(flashAlpha + 0.15, 0.4); }
-  else if (lv >= 5) { screenShake = Math.min(screenShake + lv * 0.3, 8); }
+  if (lv >= 8) { screenShake = Math.min(screenShake + lv * 0.5, 10); flashAlpha = Math.min(flashAlpha + 0.15, 0.4); }
+  else if (lv >= 5) { screenShake = Math.min(screenShake + lv * 0.2, 5); }
 }
 
 // ==================== 游戏状态 ====================
@@ -566,7 +566,7 @@ let mergeCountThisMove = 0; // tracks merges in current move for combo buff
 let milestoneReached = new Set(); // tracks which move-count milestones have triggered
 let newTileSpawn = null; // {r,c,value}
 let slideAnims = [];
-const SLIDE_DURATION = 100; // ms for slide animation
+const SLIDE_DURATION = 150; // ms for slide animation
 let cheatsEnabled = false;
 
 // ==================== Buff 定义 ====================
@@ -1285,11 +1285,12 @@ function render() {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // 屏幕震动偏移
+  // 屏幕震动偏移（使用正弦波，避免随机抖动）
   let sx = 0, sy = 0;
   if (screenShake > 0.01) {
-    sx = (Math.random() - 0.5) * screenShake * 2;
-    sy = (Math.random() - 0.5) * screenShake * 2;
+    const t = now / 1000;
+    sx = Math.sin(t * 47 + 1) * screenShake * 0.8;
+    sy = Math.cos(t * 53 + 2) * screenShake * 0.8;
   }
 
   ctx.save();
@@ -2451,7 +2452,7 @@ function gameLoop(timestamp) {
     particles = particles.filter(p => p.life > 0);
   }
   // 衰减屏幕震动
-  if (screenShake > 0.01) screenShake *= 0.85;
+  if (screenShake > 0.01) screenShake *= 0.72;
   else screenShake = 0;
   // 衰减闪光
   if (flashAlpha > 0.003) flashAlpha *= 0.75;
