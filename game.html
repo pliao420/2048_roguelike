@@ -104,7 +104,74 @@ body {
 .leaderboard-table .lb-name { text-align: left; }
 .leaderboard-table .lb-score { color: #e94560; font-weight: 700; text-align: right; }
 .leaderboard-table .lb-info { color: #7b8ab4; font-size: 12px; text-align: right; }
+.leaderboard-table .cheated .lb-name { color: #ff4757; }
 .lb-empty { color: #7b8ab4; font-size: 13px; padding: 16px; text-align: center; }
+#lb-panel {
+  width: 100%;
+  max-width: 500px;
+  background: #16213e;
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+#lb-panel h4 {
+  color: #edc22e;
+  font-size: 13px;
+  text-align: center;
+  margin: 0 0 6px;
+  cursor: pointer;
+}
+#lb-panel .lb-mini-table { width: 100%; border-collapse: collapse; }
+#lb-panel .lb-mini-table td { color: #e2e8f0; font-size: 11px; padding: 2px 6px; border-bottom: 1px solid #0f346022; }
+#lb-panel .lb-mini-table .lbm-rank { color: #edc22e; font-weight: 600; width: 20px; text-align: center; }
+#lb-panel .lb-mini-table .lbm-name { text-align: left; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#lb-panel .lb-mini-table .lbm-score { color: #e94560; font-weight: 600; text-align: right; }
+#lb-panel .lb-mini-table .cheated .lbm-name { color: #ff4757; }
+#cheat-toggle {
+  background: #333;
+  color: #999;
+  border: 1px solid #555;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+#cheat-toggle.on { background: #c0392b; color: #ffd700; border-color: #ffd700; font-weight: 700; }
+#cheat-badge {
+  position: fixed;
+  top: 120px;
+  right: 16px;
+  width: 44px; height: 44px;
+  background: #c0392b;
+  color: #ffd700;
+  border: 2px solid #ffd700;
+  border-radius: 50%;
+  font-size: 20px;
+  cursor: pointer;
+  z-index: 5;
+  display: none;
+  box-shadow: 0 0 12px rgba(255,215,0,0.4);
+  transition: transform 0.2s;
+  text-align: center; line-height: 44px;
+}
+#cheat-badge.visible { display: block; }
+#cheat-badge:active { transform: scale(1.2); }
+#cheat-menu .cheat-card {
+  background: #16213e;
+  border: 2px solid #0f3460;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  margin-bottom: 8px;
+}
+#cheat-menu .cheat-card:hover, #cheat-menu .cheat-card:active { border-color: #ffd700; background: #1a2744; }
+#cheat-menu .cheat-card .cheat-name { color: #ffd700; font-weight: 700; font-size: 14px; }
+#cheat-menu .cheat-card .cheat-desc { color: #7b8ab4; font-size: 11px; margin-top: 2px; }
+#cheat-warning { color: #ff4757; font-size: 12px; margin: 8px 0; padding: 8px; background: #ff475722; border-radius: 8px; }
 #score-box {
   background: #16213e;
   border: 2px solid #0f3460;
@@ -317,6 +384,7 @@ canvas {
       </div>
       <div id="move-count">步数: 0</div>
       <button id="reset-btn" onclick="restartGame()">新游戏</button>
+      <button id="cheat-toggle" onclick="toggleCheats()">🪄</button>
       <button id="lb-btn" onclick="showLeaderboard()">🏆</button>
     </div>
   </div>
@@ -324,7 +392,9 @@ canvas {
   <canvas id="board"></canvas>
   <div id="hint-text">方向键滑动开始</div>
   <button id="end-turn-btn" onclick="endManualMergeTurn()">结束回合</button>
+  <div id="lb-panel"><h4 onclick="showLeaderboard()">🏆 排行榜 TOP 10</h4><div id="lb-mini"></div></div>
 </div>
+<div id="cheat-badge" onclick="showCheatMenu()">🪄</div>
 
 <div id="overlay">
   <div id="popup"></div>
@@ -481,6 +551,7 @@ let milestoneReached = new Set(); // tracks which move-count milestones have tri
 let newTileSpawn = null; // {r,c,value}
 let slideAnims = [];
 const SLIDE_DURATION = 100; // ms for slide animation
+let cheatsEnabled = false;
 
 // ==================== Buff 定义 ====================
 const ALL_BUFFS = [
@@ -688,6 +759,7 @@ function hasBuff(id) { return activeBuffs.some(b => b.id === id); }
 function hasBonus(id) { return activeBonuses.some(b => b.id === id); }
 
 function shouldSkipSpawn() {
+  if (cheatSkipSpawnsRemaining > 0) { cheatSkipSpawnsRemaining--; return true; }
   if (hasBuff('skip_spawn_3') && moveCount % 3 === 0) return true;
   return false;
 }
@@ -1648,13 +1720,18 @@ function selectExpand(type) {
 function showGameOver() {
   phase = 'game_over';
   clearSave();
+  document.getElementById('cheat-badge').classList.remove('visible');
   const buffSummary = activeBuffs.map(b=>b.name).join('、') || '无';
   const bonusSummary = activeBonuses.map(b=>b.name).join('、') || '无';
+  const cheatNote = cheatsEnabled
+    ? '<div style="color:#ff4757;font-size:12px;margin-top:4px">⚠️ 已使用金手指，排行榜将红名标记</div>'
+    : '<div style="color:#6ab04c;font-size:12px;margin-top:4px">🏅 纯实力玩家</div>';
   const html = `
     <h2>游戏结束</h2>
     <div class="subtitle">最终分数: <b style="color:#e94560">${score}</b> | 步数: ${moveCount} | 棋盘: ${rows}×${cols}</div>
     <div class="subtitle" style="margin-top:4px;font-size:11px">Buff: ${buffSummary}</div>
     <div class="subtitle" style="font-size:11px">加成: ${bonusSummary}</div>
+    ${cheatNote}
     <div class="subtitle" style="margin-top:12px;color:#edc22e">留下你的名字，载入排行榜</div>
     <input id="name-input" type="text" placeholder="输入昵称" maxlength="8" autocomplete="off">
     <div style="display:flex;gap:8px;justify-content:center">
@@ -1674,11 +1751,13 @@ async function submitToLeaderboard() {
   const name = (inp && inp.value.trim()) ? inp.value.trim() : '无名玩家';
   await addToLeaderboard(name, score, moveCount, rows, cols);
   hidePopup();
+  await updateMiniLeaderboard();
   await showGameOverResult(name);
 }
 
 async function skipLeaderboard() {
   hidePopup();
+  await updateMiniLeaderboard();
   await showGameOverResult(null);
 }
 
@@ -1746,6 +1825,7 @@ async function addToLeaderboard(name, sc, moves, r, c) {
     score: sc,
     moves: moves,
     board: `${r}×${c}`,
+    cheated: cheatsEnabled,
   };
 
   if (serverAvailable) {
@@ -1779,9 +1859,13 @@ function renderLeaderboardTable(lb, highlightScore) {
     const rank = i < 3 ? rankEmoji[i] : `#${i + 1}`;
     const isHighlight = highlightScore >= 0 && entry.score === highlightScore;
     const style = isHighlight ? 'background:#e9456022;border-radius:6px' : '';
-    return `<tr style="${style}">
+    const cls = entry.cheated ? 'cheated' : '';
+    const nameDisplay = entry.cheated
+      ? `${escHtml(entry.name)}<span style="color:#ff4757;font-size:10px">〔辅〕</span>`
+      : `${escHtml(entry.name)}<span style="color:#6ab04c;font-size:10px">〔纯实力〕</span>`;
+    return `<tr class="${cls}" style="${style}">
       <td class="rank">${rank}</td>
-      <td class="lb-name">${escHtml(entry.name)}</td>
+      <td class="lb-name">${nameDisplay}</td>
       <td class="lb-score">${(entry.score||0).toLocaleString()}</td>
       <td class="lb-info">${entry.board||'?×?'} / ${entry.moves||0}步</td>
     </tr>`;
@@ -1803,6 +1887,206 @@ async function showLeaderboard() {
     <button class="btn secondary" onclick="hidePopup()">关闭</button>
   `;
   showPopup(html);
+}
+
+// ==================== 主页迷你排行榜 ====================
+async function updateMiniLeaderboard() {
+  const lb = await getLeaderboard();
+  const panel = document.getElementById('lb-mini');
+  if (!panel) return;
+  if (lb.length === 0) {
+    panel.innerHTML = '<div style="color:#7b8ab4;font-size:11px;text-align:center;padding:4px">暂无记录</div>';
+    return;
+  }
+  const rankEmoji = ['🥇','🥈','🥉'];
+  const rows = lb.slice(0, 8).map((entry, i) => {
+    const rank = i < 3 ? rankEmoji[i] : `#${i+1}`;
+    const cls = entry.cheated ? 'cheated' : '';
+    const tag = entry.cheated ? '' : '<span style="color:#6ab04c;font-size:9px"> 实力</span>';
+    return `<tr class="${cls}"><td class="lbm-rank">${rank}</td>
+      <td class="lbm-name">${escHtml(entry.name)}${tag}</td>
+      <td class="lbm-score">${(entry.score||0).toLocaleString()}</td></tr>`;
+  }).join('');
+  panel.innerHTML = `<table class="lb-mini-table">${rows}</table>`;
+}
+
+// ==================== 金手指系统 ====================
+function toggleCheats() {
+  cheatsEnabled = !cheatsEnabled;
+  const btn = document.getElementById('cheat-toggle');
+  const badge = document.getElementById('cheat-badge');
+  if (cheatsEnabled) {
+    btn.textContent = '🪄 ON';
+    btn.classList.add('on');
+    if (phase === 'playing') badge.classList.add('visible');
+  } else {
+    btn.textContent = '🪄';
+    btn.classList.remove('on');
+    badge.classList.remove('visible');
+  }
+}
+
+function showCheatMenu() {
+  if (!cheatsEnabled) return;
+  initAudio();
+  const html = `
+    <h2>🪄 金手指</h2>
+    <div id="cheat-warning">⚠️ 使用金手指后，排行榜成绩将标记红名</div>
+    <div id="cheat-menu">
+      <div class="cheat-card" onclick="cheatClearBoard()">
+        <div class="cheat-name">🧹 清屏</div><div class="cheat-desc">只保留当前最大数字，其余清空</div>
+      </div>
+      <div class="cheat-card" onclick="cheatSpawnTile()">
+        <div class="cheat-name">✨ 生成数字</div><div class="cheat-desc">在随机空格生成指定数字</div>
+      </div>
+      <div class="cheat-card" onclick="cheatGetBuff()">
+        <div class="cheat-name">🎁 获得 Buff</div><div class="cheat-desc">从所有 Buff 中任选一个加入</div>
+      </div>
+      <div class="cheat-card" onclick="cheatGetBonus()">
+        <div class="cheat-name">⭐ 获得加成</div><div class="cheat-desc">从所有加成中任选一个加入</div>
+      </div>
+      <div class="cheat-card" onclick="cheatShrinkBoard()">
+        <div class="cheat-name">📐 缩小棋盘</div><div class="cheat-desc">棋盘恢复为 4×4（保留前排数字）</div>
+      </div>
+      <div class="cheat-card" onclick="cheatSkipSpawns()">
+        <div class="cheat-name">⏭️ 跳过生成</div><div class="cheat-desc">接下来 5 步不生成新数字</div>
+      </div>
+    </div>
+    <button class="btn secondary" onclick="hidePopup()" style="margin-top:8px">关闭</button>
+  `;
+  showPopup(html);
+}
+
+function cheatClearBoard() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  let maxV = 0, maxR = 0, maxC = 0;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (grid[r][c] > maxV) { maxV = grid[r][c]; maxR = r; maxC = c; }
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (r !== maxR || c !== maxC) { grid[r][c] = 0; bombGrid[r][c] = false; }
+  hidePopup();
+  render();
+  updateUI();
+  saveGame();
+}
+
+function cheatSpawnTile() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  const vals = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+  const options = vals.map(v => `<option value="${v}">${gameMode==='fruit' ? (FRUIT_DATA[v]?.emoji||v) : v} - ${v}</option>`).join('');
+  const html = `
+    <h2>✨ 选择生成数字</h2>
+    <select id="spawn-select" style="background:#16213e;color:#fff;border:2px solid #ffd700;border-radius:8px;padding:8px 12px;font-size:16px;width:100%;margin:8px 0">${options}</select>
+    <div style="display:flex;gap:8px;justify-content:center">
+      <button class="btn secondary" onclick="hidePopup()">取消</button>
+      <button class="btn" onclick="doCheatSpawn()">生成</button>
+    </div>
+  `;
+  showPopup(html);
+}
+
+function doCheatSpawn() {
+  const sel = document.getElementById('spawn-select');
+  const val = parseInt(sel?.value || '2');
+  const empty = getEmptyCells();
+  if (empty.length > 0) {
+    const pos = empty[randInt(empty.length)];
+    grid[pos.r][pos.c] = val;
+    newTileSpawn = { r: pos.r, c: pos.c, value: val, time: Date.now() };
+  }
+  hidePopup();
+  render();
+  updateUI();
+  saveGame();
+}
+
+let cheatSkipSpawnsRemaining = 0;
+function cheatSkipSpawns() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  cheatSkipSpawnsRemaining = 5;
+  hintText.textContent = '接下来 5 步不生成新数字';
+  hidePopup();
+}
+
+function cheatGetBuff() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  const available = ALL_BUFFS.filter(b => !activeBuffs.some(ab => ab.id === b.id));
+  const html = `
+    <h2>🎁 选择 Buff</h2>
+    <div class="cards" style="max-height:400px;overflow-y:auto">
+      ${available.map(b => `
+        <div class="card" onclick="doCheatSelectBuff('${b.id}')">
+          <div class="card-icon" style="background:${b.color}22;border:2px solid ${b.color}44">${b.icon}</div>
+          <div class="card-info">
+            <div class="card-name" style="color:${b.color}">${b.name}</div>
+            <div class="card-desc">${b.desc}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <button class="btn secondary" onclick="hidePopup()" style="margin-top:8px">取消</button>
+  `;
+  showPopup(html);
+}
+
+function doCheatSelectBuff(id) {
+  const full = ALL_BUFFS.find(b => b.id === id);
+  if (full) activeBuffs.push({ ...full, used: false });
+  hidePopup();
+  updateUI();
+  saveGame();
+}
+
+function cheatGetBonus() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  const available = ALL_BONUSES.filter(b => !activeBonuses.some(ab => ab.id === b.id));
+  const html = `
+    <h2>⭐ 选择加成</h2>
+    <div class="cards" style="max-height:400px;overflow-y:auto">
+      ${available.map(b => `
+        <div class="card" onclick="doCheatSelectBonus('${b.id}')">
+          <div class="card-icon" style="background:${b.color}22;border:2px solid ${b.color}44">${b.icon}</div>
+          <div class="card-info">
+            <div class="card-name" style="color:${b.color}">${b.name}</div>
+            <div class="card-desc">${b.desc}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <button class="btn secondary" onclick="hidePopup()" style="margin-top:8px">取消</button>
+  `;
+  showPopup(html);
+}
+
+function doCheatSelectBonus(id) {
+  const full = ALL_BONUSES.find(b => b.id === id);
+  if (full) activeBonuses.push({ ...full });
+  hidePopup();
+  updateUI();
+  saveGame();
+}
+
+function cheatShrinkBoard() {
+  if (!cheatsEnabled || phase !== 'playing') return;
+  const newRows = 4, newCols = 4;
+  const newGrid = [], newBomb = [];
+  for (let r = 0; r < newRows; r++) {
+    newGrid[r] = [];
+    newBomb[r] = [];
+    for (let c = 0; c < newCols; c++) {
+      newGrid[r][c] = (r < rows && c < cols) ? grid[r][c] : 0;
+      newBomb[r][c] = (r < rows && c < cols) ? (bombGrid[r]?.[c] || false) : false;
+    }
+  }
+  rows = newRows; cols = newCols;
+  grid = newGrid; bombGrid = newBomb;
+  hidePopup();
+  resizeCanvas();
+  render();
+  updateUI();
+  saveGame();
 }
 
 function escHtml(s) {
@@ -1867,6 +2151,9 @@ function startGame() {
   screenShake = 0;
   flashAlpha = 0;
   mergeResults = [];
+  cheatSkipSpawnsRemaining = 0;
+
+  if (cheatsEnabled) document.getElementById('cheat-badge').classList.add('visible');
 
   if (hasBuff('big_start')) {
     const empty = getEmptyCells();
@@ -2207,7 +2494,7 @@ function restoreSave() {
 }
 
 resizeCanvas();
-checkServer();
+checkServer().then(() => updateMiniLeaderboard());
 initGame();
 gameLoop();
 </script>

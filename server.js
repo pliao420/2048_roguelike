@@ -25,9 +25,8 @@ app.get('/api/leaderboard', (req, res) => {
 
 // POST /api/leaderboard — add a new entry
 app.post('/api/leaderboard', (req, res) => {
-  const { name, score, moves, board } = req.body;
+  const { name, score, moves, board, cheated } = req.body;
 
-  // Validate
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ error: '名字不能为空' });
   }
@@ -40,6 +39,7 @@ app.post('/api/leaderboard', (req, res) => {
     score,
     moves: moves || 0,
     board: board || '?×?',
+    cheated: !!cheated,
     date: new Date().toLocaleDateString('zh-CN'),
     time: Date.now(),
   };
