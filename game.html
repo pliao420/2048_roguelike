@@ -521,19 +521,25 @@ let mergeResults = [];
 
 function spawnParticles(x, y, value) {
   const lv = Math.log2(value);
-  const count = Math.min(Math.floor(lv * 4), 40);
-  const hue = (lv * 30) % 360;
+  const count = Math.min(Math.floor(lv * 3), 25);
+  // 多种颜色：金色、白色、水果色混合
+  const colors = [
+    `hsl(${40 + Math.random() * 30}, 90%, ${55 + Math.random() * 30}%)`, // 金黄
+    `hsl(${Math.random() * 60}, 85%, ${60 + Math.random() * 25}%)`,       // 暖色
+    `hsl(${200 + Math.random() * 40}, 70%, ${65 + Math.random() * 25}%)`, // 蓝绿
+    `#ffd700`, `#fff`, `#ff7675`, `#74b9ff`, `#55efc4`,
+  ];
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
     const speed = 1.5 + Math.random() * lv * 0.8;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 1,
+      vy: Math.sin(angle) * speed - 2,
       life: 1,
-      decay: 0.015 + Math.random() * 0.035,
-      color: `hsl(${hue + Math.random() * 40}, 80%, ${50 + Math.random() * 25}%)`,
-      size: 2 + Math.random() * 5,
+      decay: 0.02 + Math.random() * 0.05,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 2.5 + Math.random() * 4,
     });
   }
 }
@@ -544,7 +550,7 @@ function triggerMergeEffect(r, c, value) {
   spawnParticles(cx, cy, value);
   playMergeSound(value);
   const lv = Math.log2(value);
-  if (lv >= 8) { screenShake = Math.min(screenShake + lv * 0.8, 20); flashAlpha = Math.min(flashAlpha + 0.3, 0.8); }
+  if (lv >= 8) { screenShake = Math.min(screenShake + lv * 0.8, 20); flashAlpha = Math.min(flashAlpha + 0.15, 0.4); }
   else if (lv >= 5) { screenShake = Math.min(screenShake + lv * 0.3, 8); }
 }
 
@@ -1364,12 +1370,9 @@ function render() {
       ctx.translate(-cx, -cy);
     }
     if (gameMode === 'fruit') {
-      // 水果模式：用简化版绘制（避免重复emoji渲染开销）
       const fd = FRUIT_DATA[v] || { name: v+'', emoji: '❓', baseColor: '#555', grad: ['#666','#444'] };
-      const grad = ctx.createLinearGradient(ax, ay, ax + CELL_SIZE, ay + CELL_SIZE);
-      grad.addColorStop(0, fd.grad[0]); grad.addColorStop(1, fd.grad[1]);
-      ctx.fillStyle = grad;
-      ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 2;
+      ctx.fillStyle = fd.baseColor + '44';
+      ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
       ctx.beginPath();
       roundRect(ctx, ax + 2, ay + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
       ctx.fill();
@@ -1378,9 +1381,6 @@ function render() {
       ctx.font = `${es}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(fd.emoji, cx, cy - 4);
-      ctx.fillStyle = v < 64 ? '#333' : '#fff';
-      ctx.font = 'bold 10px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.fillText(fd.name, cx, ay + CELL_SIZE - 12);
     } else {
       const bgColor = TILE_COLORS[v] || '#3c3a32';
       const textColor = TILE_TEXT_COLORS[v] || '#f9f6f2';
@@ -1526,14 +1526,11 @@ function drawFruitTile(xx, yy, v, scale, now, key) {
   ctx.scale(scale, scale);
   ctx.translate(-cx, -cy);
 
-  // 渐变背景
-  const grad = ctx.createLinearGradient(xx, yy, xx + CELL_SIZE, yy + CELL_SIZE);
-  grad.addColorStop(0, fd.grad[0]);
-  grad.addColorStop(1, fd.grad[1]);
-  ctx.fillStyle = grad;
-  ctx.shadowColor = fd.mega ? 'rgba(255,215,0,0.6)' : 'rgba(0,0,0,0.3)';
-  ctx.shadowBlur = fd.mega ? 12 : 4;
-  ctx.shadowOffsetY = 2;
+  // 简洁半透明背景 + 圆角
+  ctx.fillStyle = fd.baseColor + '44'; // 低透明度，轻量着色
+  ctx.shadowColor = fd.mega ? 'rgba(255,215,0,0.5)' : 'rgba(0,0,0,0.2)';
+  ctx.shadowBlur = fd.mega ? 10 : 3;
+  ctx.shadowOffsetY = 1;
   ctx.beginPath();
   roundRect(ctx, xx + 2, yy + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
   ctx.fill();
@@ -1568,16 +1565,11 @@ function drawFruitTile(xx, yy, v, scale, now, key) {
   }
 
   // 大号emoji
-  const emojiSize = v < 256 ? 30 : v < 2048 ? 34 : 40;
+  const emojiSize = v < 256 ? 32 : v < 2048 ? 36 : 42;
   ctx.font = `${emojiSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(fd.emoji, cx, cy - 4);
-
-  // 水果名（小）
-  ctx.fillStyle = v < 64 ? '#333' : '#fff';
-  ctx.font = `bold 10px "PingFang SC","Microsoft YaHei",sans-serif`;
-  ctx.fillText(fd.name, cx, yy + CELL_SIZE - 12);
+  ctx.fillText(fd.emoji, cx, cy + 1);
 
   ctx.restore();
 }
@@ -2467,7 +2459,7 @@ function gameLoop(timestamp) {
   if (screenShake > 0.01) screenShake *= 0.85;
   else screenShake = 0;
   // 衰减闪光
-  if (flashAlpha > 0.005) flashAlpha *= 0.9;
+  if (flashAlpha > 0.003) flashAlpha *= 0.75;
   else flashAlpha = 0;
 
   render();
