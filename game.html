@@ -67,6 +67,16 @@ body {
   transition: all 0.2s;
 }
 #lb-btn:active { transform: scale(0.95); }
+#sound-btn {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  transition: transform 0.2s;
+  line-height: 1;
+}
+#sound-btn:active { transform: scale(1.3); }
 #name-input {
   background: #16213e;
   border: 2px solid #53d8fb;
@@ -383,6 +393,7 @@ canvas {
         <div id="score-value">0</div>
       </div>
       <div id="move-count">步数: 0</div>
+      <button id="sound-btn" onclick="toggleSound()" title="音效">🔊</button>
       <button id="reset-btn" onclick="restartGame()">新游戏</button>
       <button id="cheat-toggle" onclick="toggleCheats()">🪄</button>
       <button id="lb-btn" onclick="showLeaderboard()">🏆</button>
@@ -468,6 +479,11 @@ function initAudio() {
     try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function toggleSound() {
+  audioEnabled = !audioEnabled;
+  document.getElementById('sound-btn').textContent = audioEnabled ? '🔊' : '🔇';
+  if (audioEnabled && audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 }
 function playNote(freq, delay, dur, vol, type) {
   if (!audioCtx || audioCtx.state === 'suspended') return;
