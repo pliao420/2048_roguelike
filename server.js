@@ -53,6 +53,21 @@ app.post('/api/leaderboard', (req, res) => {
   res.json({ success: true, leaderboard: lb.slice(0, 10) });
 });
 
+// DELETE /api/leaderboard — remove an entry by index (0-based)
+app.delete('/api/leaderboard', (req, res) => {
+  const { index } = req.body;
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: '索引无效' });
+  }
+  const lb = readLeaderboard();
+  if (index >= lb.length) {
+    return res.status(404).json({ error: '条目不存在' });
+  }
+  const removed = lb.splice(index, 1)[0];
+  writeLeaderboard(lb);
+  res.json({ success: true, removed, leaderboard: lb.slice(0, 10) });
+});
+
 function readLeaderboard() {
   try {
     if (!fs.existsSync(DATA_FILE)) return [];

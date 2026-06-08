@@ -1852,7 +1852,7 @@ async function addToLeaderboard(name, sc, moves, r, c) {
   return top10;
 }
 
-function renderLeaderboardTable(lb, highlightScore) {
+function renderLeaderboardTable(lb, highlightScore, showDelete) {
   if (lb.length === 0) return '<div class="lb-empty">暂无记录</div>';
   const rankEmoji = ['🥇','🥈','🥉'];
   const rows = lb.map((entry, i) => {
@@ -1863,11 +1863,14 @@ function renderLeaderboardTable(lb, highlightScore) {
     const nameDisplay = entry.cheated
       ? `${escHtml(entry.name)}<span style="color:#ff4757;font-size:10px">〔辅〕</span>`
       : `${escHtml(entry.name)}<span style="color:#6ab04c;font-size:10px">〔纯实力〕</span>`;
+    const delBtn = showDelete
+      ? `<span onclick="deleteLeaderboardFromPopup(${i})" style="cursor:pointer;color:#ff4757;font-weight:700;font-size:16px;padding:0 4px">✕</span>`
+      : '';
     return `<tr class="${cls}" style="${style}">
       <td class="rank">${rank}</td>
       <td class="lb-name">${nameDisplay}</td>
       <td class="lb-score">${(entry.score||0).toLocaleString()}</td>
-      <td class="lb-info">${entry.board||'?×?'} / ${entry.moves||0}步</td>
+      <td class="lb-info">${entry.board||'?×?'} / ${entry.moves||0}步${delBtn}</td>
     </tr>`;
   }).join('');
   return `<table class="leaderboard-table">
@@ -1876,24 +1879,57 @@ function renderLeaderboardTable(lb, highlightScore) {
   </table>`;
 }
 
+async function deleteLeaderboardFromPopup(index) {
+  await deleteLeaderboardEntry(index);
+  showLeaderboard(); // 刷新弹窗
+}
+
 async function showLeaderboard() {
   if (overlay.classList.contains('active')) return;
   const lb = await getLeaderboard();
   const modeText = serverAvailable ? '🌐 联网排行榜' : '💻 本地排行榜';
+  const delHint = lbDeleteMode ? '<div style="color:#ff4757;font-size:11px;margin:4px 0">🗑️ 删除模式 — 点击 ✕ 移除条目</div>' : '';
   const html = `
     <h2>🏆 排行榜</h2>
     <div class="subtitle">${modeText}</div>
-    ${renderLeaderboardTable(lb, -1)}
+    ${delHint}
+    ${renderLeaderboardTable(lb, -1, lbDeleteMode)}
     <button class="btn secondary" onclick="hidePopup()">关闭</button>
   `;
   showPopup(html);
 }
 
 // ==================== 主页迷你排行榜 ====================
+let lbClickCount = 0;
+let lbClickTimer = null;
+let lbDeleteMode = false;
+
 async function updateMiniLeaderboard() {
   const lb = await getLeaderboard();
   const panel = document.getElementById('lb-mini');
+  const header = document.querySelector('#lb-panel h4');
   if (!panel) return;
+  if (header) {
+    header.onclick = () => {
+      lbClickCount++;
+      if (lbClickTimer) clearTimeout(lbClickTimer);
+      if (lbClickCount >= 5) {
+        lbClickCount = 0;
+        lbDeleteMode = !lbDeleteMode;
+        if (lbDeleteMode) {
+          header.textContent = '🗑️ 删除模式（点击 X 删除，5次切换回）';
+          header.style.color = '#ff4757';
+        } else {
+          header.textContent = '🏆 排行榜 TOP 10';
+          header.style.color = '#edc22e';
+        }
+        updateMiniLeaderboard();
+        return;
+      }
+      lbClickTimer = setTimeout(() => { lbClickCount = 0; }, 3000);
+      showLeaderboard();
+    };
+  }
   if (lb.length === 0) {
     panel.innerHTML = '<div style="color:#7b8ab4;font-size:11px;text-align:center;padding:4px">暂无记录</div>';
     return;
@@ -1903,11 +1939,34 @@ async function updateMiniLeaderboard() {
     const rank = i < 3 ? rankEmoji[i] : `#${i+1}`;
     const cls = entry.cheated ? 'cheated' : '';
     const tag = entry.cheated ? '' : '<span style="color:#6ab04c;font-size:9px"> 实力</span>';
+    const delBtn = lbDeleteMode
+      ? `<span onclick="event.stopPropagation();deleteLeaderboardEntry(${i})" style="cursor:pointer;color:#ff4757;font-weight:700;font-size:16px;padding:0 4px">✕</span>`
+      : '';
     return `<tr class="${cls}"><td class="lbm-rank">${rank}</td>
       <td class="lbm-name">${escHtml(entry.name)}${tag}</td>
-      <td class="lbm-score">${(entry.score||0).toLocaleString()}</td></tr>`;
+      <td class="lbm-score">${(entry.score||0).toLocaleString()}${delBtn}</td></tr>`;
   }).join('');
   panel.innerHTML = `<table class="lb-mini-table">${rows}</table>`;
+}
+
+async function deleteLeaderboardEntry(index) {
+  if (!lbDeleteMode) return;
+  if (serverAvailable) {
+    try {
+      await fetch(API_BASE, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index }),
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch(e) { serverAvailable = false; }
+  }
+  if (!serverAvailable) {
+    const lb = getLocalLB();
+    lb.splice(index, 1);
+    saveLocalLB(lb);
+  }
+  await updateMiniLeaderboard();
 }
 
 // ==================== 金手指系统 ====================
