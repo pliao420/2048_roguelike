@@ -521,19 +521,19 @@ let mergeResults = [];
 
 function spawnParticles(x, y, value) {
   const lv = Math.log2(value);
-  const count = Math.min(Math.floor(lv * 2.5), 20);
-  const colors = ['#ffd700','#fff','#ff7675','#74b9ff','#55efc4','#fdcb6e','#a29bfe'];
+  const count = Math.min(Math.floor(lv * 2), 12);
+  const colors = ['#ffd700','#fff','#ff7675','#74b9ff','#55efc4'];
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = 2 + Math.random() * lv * 0.6;
+    const speed = 3 + Math.random() * lv * 0.5;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed - lv * 0.5,
       life: 1,
-      decay: 0.03 + Math.random() * 0.06,
+      decay: 0.06 + Math.random() * 0.06,
       color: colors[Math.floor(Math.random() * colors.length)],
-      size: 2 + Math.random() * 3,
+      size: 1.5 + Math.random() * 2,
     });
   }
 }
@@ -1491,9 +1491,9 @@ function drawClassicTile(xx, yy, v, scale, now, key) {
     const elapsed = now - newTileSpawn.time;
     if (elapsed < 1500 && `${newTileSpawn.r},${newTileSpawn.c}` === key) {
       const alpha = 1 - elapsed / 1500;
-      ctx.strokeStyle = `rgba(233, 69, 96, ${alpha})`;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
       ctx.lineWidth = 3;
-      ctx.shadowColor = `rgba(233, 69, 96, ${alpha * 0.6})`;
+      ctx.shadowColor = `rgba(255, 255, 255, ${alpha * 0.6})`;
       ctx.shadowBlur = 10;
       ctx.beginPath();
       roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
@@ -1548,9 +1548,9 @@ function drawFruitTile(xx, yy, v, scale, now, key) {
     const elapsed = now - newTileSpawn.time;
     if (elapsed < 1500 && `${newTileSpawn.r},${newTileSpawn.c}` === key) {
       const alpha = 1 - elapsed / 1500;
-      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
       ctx.lineWidth = 3;
-      ctx.shadowColor = `rgba(255, 215, 0, ${alpha * 0.6})`;
+      ctx.shadowColor = `rgba(255, 255, 255, ${alpha * 0.6})`;
       ctx.shadowBlur = 10;
       ctx.beginPath();
       roundRect(ctx, xx + 1, yy + 1, CELL_SIZE - 2, CELL_SIZE - 2, 9);
