@@ -479,6 +479,8 @@ let bombGrid = []; // 2D array: bombGrid[r][c] = true if tile has bomb
 let mergeCountThisMove = 0; // tracks merges in current move for combo buff
 let milestoneReached = new Set(); // tracks which move-count milestones have triggered
 let newTileSpawn = null; // {r,c,value}
+let slideAnims = [];
+const SLIDE_DURATION = 100; // ms for slide animation
 
 // ==================== Buff 定义 ====================
 const ALL_BUFFS = [
@@ -692,36 +694,32 @@ function shouldSkipSpawn() {
 
 // ==================== 移动逻辑 ====================
 function slideLine(line, bombLine) {
-  const filtered = [];
-  const filteredBombs = [];
+  // 记录每个非零方块的原始位置
+  const items = [];
   for (let i = 0; i < line.length; i++) {
-    if (line[i] !== 0) {
-      filtered.push(line[i]);
-      filteredBombs.push(bombLine ? bombLine[i] : false);
-    }
+    if (line[i] !== 0) items.push({ v: line[i], orig: i, bomb: bombLine ? bombLine[i] : false });
   }
   const result = [];
   const bombResult = [];
+  const anims = []; // [{from, to, value, type:'slide'|'merge_src'|'merge_result'}]
   let scoreGain = 0;
   let i = 0;
-  while (i < filtered.length) {
-    if (i + 1 < filtered.length && filtered[i] === filtered[i + 1]) {
-      let mergeVal = filtered[i] * 2;
-      const mergedBomb = filteredBombs[i] || filteredBombs[i + 1];
-      // 应用有针对数字的加成
+  while (i < items.length) {
+    if (i + 1 < items.length && items[i].v === items[i + 1].v) {
+      let mergeVal = items[i].v * 2;
+      const mergedBomb = items[i].bomb || items[i + 1].bomb;
       for (const bonus of activeBonuses) {
-        if (bonus.targetNumber && bonus.targetNumber === filtered[i] && bonus.apply) {
-          mergeVal = bonus.apply(mergeVal);
-          break;
+        if (bonus.targetNumber && bonus.targetNumber === items[i].v && bonus.apply) {
+          mergeVal = bonus.apply(mergeVal); break;
         }
       }
-      // 应用通用加成
       for (const bonus of activeBonuses) {
-        if (!bonus.targetNumber && bonus.apply) {
-          mergeVal = bonus.apply(mergeVal);
-          break;
-        }
+        if (!bonus.targetNumber && bonus.apply) { mergeVal = bonus.apply(mergeVal); break; }
       }
+      const toIdx = result.length;
+      anims.push({ from: items[i].orig, to: toIdx, value: items[i].v, type: 'merge_src' });
+      anims.push({ from: items[i+1].orig, to: toIdx, value: items[i+1].v, type: 'merge_src' });
+      anims.push({ from: -1, to: toIdx, value: mergeVal, type: 'merge_result' });
       result.push(mergeVal);
       bombResult.push(mergedBomb);
       scoreGain += mergeVal;
@@ -734,8 +732,12 @@ function slideLine(line, bombLine) {
       if (mergeVal === 2048) hasMerged2048ThisTurn = true;
       i += 2;
     } else {
-      result.push(filtered[i]);
-      bombResult.push(filteredBombs[i]);
+      const toIdx = result.length;
+      if (items[i].orig !== toIdx) {
+        anims.push({ from: items[i].orig, to: toIdx, value: items[i].v, type: 'slide' });
+      }
+      result.push(items[i].v);
+      bombResult.push(items[i].bomb);
       i++;
     }
   }
@@ -743,7 +745,7 @@ function slideLine(line, bombLine) {
     result.push(0);
     bombResult.push(false);
   }
-  return { result, scoreGain, bombResult };
+  return { result, scoreGain, bombResult, anims };
 }
 
 function slideLineNoMerge(line) {
@@ -812,24 +814,41 @@ function moveGrid(direction) {
     }
   } else {
     // 自动合成模式（炸弹随合成继承）
+    slideAnims = [];
     if (direction === 0 || direction === 2) {
       for (let c = 0; c < cols; c++) {
         let line = [], bLine = [];
         for (let r = 0; r < rows; r++) { line.push(grid[r][c]); bLine.push(bombGrid[r][c]); }
         if (direction === 2) { line.reverse(); bLine.reverse(); }
-        const { result, scoreGain, bombResult } = slideLine(line, bLine);
+        const { result, scoreGain, bombResult, anims } = slideLine(line, bLine);
         if (direction === 2) { result.reverse(); bombResult.reverse(); }
         for (let r = 0; r < rows; r++) { grid[r][c] = result[r]; bombGrid[r][c] = bombResult[r]; }
         totalScore += scoreGain;
+        // 转换行内动画坐标为画布坐标
+        for (const a of anims) {
+          const actualTo = direction === 2 ? rows - 1 - a.to : a.to;
+          const actualFrom = a.from >= 0 ? (direction === 2 ? rows - 1 - a.from : a.from) : -1;
+          const ti = { value: a.value, toX: cellX(c), toY: cellY(actualTo), fromX: cellX(c), type: a.type, progress: 0 };
+          ti.fromY = a.from >= 0 ? cellY(actualFrom) : ti.toY;
+          slideAnims.push(ti);
+        }
       }
     } else {
       for (let r = 0; r < rows; r++) {
         let line = [...grid[r]], bLine = [...bombGrid[r]];
         if (direction === 1) { line.reverse(); bLine.reverse(); }
-        const { result, scoreGain, bombResult } = slideLine(line, bLine);
+        const { result, scoreGain, bombResult, anims } = slideLine(line, bLine);
         if (direction === 1) { result.reverse(); bombResult.reverse(); }
         grid[r] = result; bombGrid[r] = bombResult;
         totalScore += scoreGain;
+        // 转换行内动画坐标为画布坐标
+        for (const a of anims) {
+          const actualTo = direction === 1 ? cols - 1 - a.to : a.to;
+          const actualFrom = a.from >= 0 ? (direction === 1 ? cols - 1 - a.from : a.from) : -1;
+          const ti = { value: a.value, toX: cellX(actualTo), toY: cellY(r), fromY: cellY(r), type: a.type, progress: 0 };
+          ti.fromX = a.from >= 0 ? cellX(actualFrom) : ti.toX;
+          slideAnims.push(ti);
+        }
       }
     }
   }
@@ -1217,6 +1236,81 @@ function render() {
   // 方块
   const now = Date.now();
 
+  // 收集动画目标位置，静态渲染时跳过这些
+  const animTargetKeys = new Set();
+  const animSrcKeys = new Set();
+  for (const a of slideAnims) {
+    if (a.type !== 'merge_src') {
+      animTargetKeys.add(`${cellToRow(a.toY)},${cellToCol(a.toX)}`);
+    }
+    if (a.fromX !== a.toX || a.fromY !== a.toY) {
+      animSrcKeys.add(`${cellToRow(a.fromY)},${cellToCol(a.fromX)}`);
+    }
+  }
+
+  // 先绘制滑动中的块（插值位置）
+  for (const a of slideAnims) {
+    const t = Math.min(a.progress, 1);
+    const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease in-out
+    let ax, ay, alpha = 1, drawScale = 1;
+
+    if (a.type === 'merge_result') {
+      // 合并结果：在目标位置淡入+弹入
+      ax = a.toX; ay = a.toY;
+      drawScale = t < 0.5 ? t * 1.4 : 1 + 0.2 * (1 - t);
+      alpha = Math.min(t * 2, 1);
+    } else {
+      // 滑动 / 合并源：从来源移到目标
+      ax = a.fromX + (a.toX - a.fromX) * eased;
+      ay = a.fromY + (a.toY - a.fromY) * eased;
+      if (a.type === 'merge_src') alpha = Math.max(0, 1 - t); // 合并源渐隐
+    }
+
+    const v = a.value;
+    const cx = ax + CELL_SIZE / 2, cy = ay + CELL_SIZE / 2;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (drawScale !== 1) {
+      ctx.translate(cx, cy);
+      ctx.scale(drawScale, drawScale);
+      ctx.translate(-cx, -cy);
+    }
+    if (gameMode === 'fruit') {
+      // 水果模式：用简化版绘制（避免重复emoji渲染开销）
+      const fd = FRUIT_DATA[v] || { name: v+'', emoji: '❓', baseColor: '#555', grad: ['#666','#444'] };
+      const grad = ctx.createLinearGradient(ax, ay, ax + CELL_SIZE, ay + CELL_SIZE);
+      grad.addColorStop(0, fd.grad[0]); grad.addColorStop(1, fd.grad[1]);
+      ctx.fillStyle = grad;
+      ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 2;
+      ctx.beginPath();
+      roundRect(ctx, ax + 2, ay + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      const es = v < 256 ? 30 : v < 2048 ? 34 : 40;
+      ctx.font = `${es}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(fd.emoji, cx, cy - 4);
+      ctx.fillStyle = v < 64 ? '#333' : '#fff';
+      ctx.font = 'bold 10px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.fillText(fd.name, cx, ay + CELL_SIZE - 12);
+    } else {
+      const bgColor = TILE_COLORS[v] || '#3c3a32';
+      const textColor = TILE_TEXT_COLORS[v] || '#f9f6f2';
+      ctx.fillStyle = bgColor;
+      ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 2;
+      ctx.beginPath();
+      roundRect(ctx, ax + 2, ay + 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.fillStyle = textColor;
+      const fs = v < 100 ? 28 : v < 1000 ? 24 : v < 10000 ? 20 : 16;
+      ctx.font = `bold ${fs}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(v, cx, cy + 2);
+    }
+    ctx.restore();
+  }
+
   // 找出刚合并的方块位置（用于动画跳动）
   const mergedKeys = new Set();
   const activeMerges = mergeResults.filter(m => now - m.time < 400);
@@ -1226,6 +1320,7 @@ function render() {
     for (let c = 0; c < cols; c++) {
       if (grid[r][c] === 0) continue;
       const key = `${r},${c}`;
+      if (animTargetKeys.has(key)) continue; // 动画正在绘制此位置
       const v = grid[r][c];
       let xx = cellX(c), yy = cellY(r);
 
@@ -1236,7 +1331,6 @@ function render() {
         const elapsed = now - m.time;
         const dur = 400;
         const t = Math.min(elapsed / dur, 1);
-        // 弹跳曲线：0→1.3→1
         scale = t < 0.5
           ? 1 + Math.sin(t * Math.PI) * 0.35
           : 1 + Math.sin(t * Math.PI) * 0.1 * (1 - t);
@@ -1986,6 +2080,16 @@ function gameLoop(timestamp) {
   if (!lastFrameTime) lastFrameTime = timestamp;
   const dt = Math.min(timestamp - lastFrameTime, 50);
   lastFrameTime = timestamp;
+
+  // 更新滑动动画
+  if (slideAnims.length > 0) {
+    let allDone = true;
+    for (const a of slideAnims) {
+      a.progress += dt / SLIDE_DURATION;
+      if (a.progress < 1.2) allDone = false; // 给merge_result一点额外时间
+    }
+    if (allDone) slideAnims = [];
+  }
 
   // 更新粒子
   if (particles.length > 0) {
